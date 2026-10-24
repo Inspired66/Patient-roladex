@@ -2,6 +2,8 @@ import { formatBytes } from "./format.ts";
 
 const DB_NAME = "vellum";
 const STORE = "files";
+const METADATA_STORE = "metadata";
+export const ATTACHMENTS_SCHEMA_VERSION = 2;
 
 export const MAX_FILE_BYTES = 4 * 1024 * 1024;
 export const MAX_FILES = 8;
@@ -27,7 +29,7 @@ export function acceptFiles(existing: number, incoming: File[]) {
       error = "That file was empty.";
       continue;
     }
-    if (!isSupportedAttachment(file)) {
+    if (!isSupportedAttachmentMetadata(file.name, file.type)) {
       error = "Choose an image, audio recording, PDF, or plain-text file.";
       continue;
     }
@@ -77,20 +79,46 @@ const ALLOWED_EXTENSIONS = new Set([
   "txt",
 ]);
 
-function isSupportedAttachment(file: File) {
-  const mime = file.type.split(";", 1)[0].trim().toLowerCase();
+export function isSupportedAttachmentMetadata(name: string, type: string) {
+  const mime = type.split(";", 1)[0].trim().toLowerCase();
   if (ALLOWED_MIME_TYPES.has(mime)) return true;
   if (mime && mime !== "application/octet-stream") return false;
-  const extension = file.name.toLowerCase().split(".").at(-1);
+  const extension = name.toLowerCase().split(".").at(-1);
   return Boolean(extension && ALLOWED_EXTENSIONS.has(extension));
+}
+
+type UpgradeDatabase = {
+  objectStoreNames: { contains(name: string): boolean };
+  createObjectStore(name: string): unknown;
+};
+
+type UpgradeTransaction = {
+  objectStore(name: string): { put(value: unknown, key?: IDBValidKey): unknown };
+};
+
+export function upgradeAttachmentDatabase(
+  db: UpgradeDatabase,
+  transaction: UpgradeTransaction,
+  oldVersion: number,
+) {
+  if (oldVersion < 1 && !db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+  if (oldVersion < 2) {
+    if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+    if (!db.objectStoreNames.contains(METADATA_STORE)) db.createObjectStore(METADATA_STORE);
+    transaction.objectStore(METADATA_STORE).put(ATTACHMENTS_SCHEMA_VERSION, "schemaVersion");
+  }
 }
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE);
+    const request = indexedDB.open(DB_NAME, ATTACHMENTS_SCHEMA_VERSION);
+    request.onupgradeneeded = (event) => {
+      const transaction = request.transaction;
+      if (!transaction) {
+        reject(new Error("Could not upgrade attachment storage."));
+        return;
+      }
+      upgradeAttachmentDatabase(request.result, transaction, event.oldVersion);
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error("Could not open files"));
