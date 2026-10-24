@@ -9,7 +9,10 @@ mkdir -p "$BUILD"
 javac --release 17 -d "$BUILD" \
   "$ROOT/android/src/com/vellum/casebook/NativeAttachmentPolicy.java" \
   "$ROOT/android/src/com/vellum/casebook/NativeSavePolicy.java" \
+  "$ROOT/android/src/com/vellum/casebook/NativeAudioPermissionPolicy.java" \
   "$ROOT/android/test/com/vellum/casebook/NativeAttachmentPolicyTest.java" \
-  "$ROOT/android/test/com/vellum/casebook/NativeSavePolicyTest.java"
+  "$ROOT/android/test/com/vellum/casebook/NativeSavePolicyTest.java" \
+  "$ROOT/android/test/com/vellum/casebook/NativeAudioPermissionPolicyTest.java"
 java -cp "$BUILD" com.vellum.casebook.NativeAttachmentPolicyTest
 java -cp "$BUILD" com.vellum.casebook.NativeSavePolicyTest
+java -cp "$BUILD" com.vellum.casebook.NativeAudioPermissionPolicyTest
