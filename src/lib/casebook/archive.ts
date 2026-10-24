@@ -6,6 +6,7 @@ import {
   MAX_FILES,
   putBlob,
 } from "./files.ts";
+import { callNative, hasNativeMessageBridge } from "./native-bridge.ts";
 import { given, joinName, surname } from "./format.ts";
 import type { Attachment, Consult, Contact, Patient, Surgery } from "./types.ts";
 
@@ -541,86 +542,37 @@ export function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-type NativeBridge = {
-  beginMicrophoneCapture: () => void;
-  endMicrophoneCapture: () => void;
-  requestCamera: () => void;
-  beginSave: (filename: string, mime: string) => void;
-  writeChunk: (base64: string) => void;
-  finishSave: () => void;
-};
-
 type SaveWindow = Window & {
-  VellumNative?: NativeBridge;
-  __vellumPicker?: (ok: boolean) => void;
-  __vellumSaveResult?: (ok: boolean) => void;
-  __vellumMic?: (ok: boolean, reason: string) => void;
   __vellumMicPause?: () => void;
   __vellumAbortRecording?: () => void;
-  __vellumCam?: (ok: boolean, reason: string) => void;
 };
 
-function bridge() {
-  if (typeof window === "undefined") return null;
-  const native = (window as SaveWindow).VellumNative;
-  if (!native || typeof native.beginSave !== "function") return null;
-  return native;
-}
-
 export function hasNativeSave() {
-  return bridge() != null;
+  return hasNativeMessageBridge();
 }
 
 export function requestPhoneMicrophone(userInitiated: boolean) {
-  const native = typeof window === "undefined" ? null : (window as SaveWindow).VellumNative;
-  if (!native || typeof native.beginMicrophoneCapture !== "function")
+  if (!hasNativeMessageBridge())
     return Promise.resolve("browser" as const);
   if (!userInitiated) return Promise.resolve("gesture_required" as const);
-  return new Promise<"granted" | "denied" | "settings">((resolve) => {
-    const finish = (result: "granted" | "denied" | "settings") => {
-      window.clearTimeout(timer);
-      (window as SaveWindow).__vellumMic = undefined;
-      (window as SaveWindow).__vellumMicPause = undefined;
-      resolve(result);
-    };
-    const timer = window.setTimeout(() => {
-      native.endMicrophoneCapture?.();
-      finish("denied");
-    }, 120000);
-    (window as SaveWindow).__vellumMic = (ok, reason) => {
-      if (ok) finish("granted");
-      else finish(reason === "settings" ? "settings" : "denied");
-    };
-    (window as SaveWindow).__vellumMicPause = () => {
-      finish("denied");
-    };
-    native.beginMicrophoneCapture();
-  });
+  return callNative<{ status: "granted" | "denied" | "settings" }>("beginMicrophoneCapture")
+    .then((result) => result?.status ?? "denied")
+    .catch(() => "denied" as const);
 }
 
 export function endPhoneMicrophoneCapture() {
-  const native = typeof window === "undefined" ? null : (window as SaveWindow).VellumNative;
-  native?.endMicrophoneCapture?.();
+  if (hasNativeMessageBridge()) void callNative("endMicrophoneCapture").catch(() => undefined);
   if (typeof window !== "undefined") {
-    (window as SaveWindow).__vellumMic = undefined;
     (window as SaveWindow).__vellumMicPause = undefined;
   }
 }
 
 export function requestPhoneCamera() {
-  const native = typeof window === "undefined" ? null : (window as SaveWindow).VellumNative;
-  if (!native || typeof native.requestCamera !== "function")
+  if (!hasNativeMessageBridge())
     return Promise.resolve("browser" as const);
-  return new Promise<"granted" | "denied" | "settings">((resolve) => {
-    const timer = window.setTimeout(() => resolve("denied"), 120000);
-    (window as SaveWindow).__vellumCam = (ok, reason) => {
-      window.clearTimeout(timer);
-      (window as SaveWindow).__vellumCam = undefined;
-      if (ok) resolve("granted");
-      else resolve(reason === "settings" ? "settings" : "denied");
-    };
-    native.requestCamera();
-  });
+  return callNative<{ status: "granted" | "denied" | "settings" }>("requestCamera")
+    .then((result) => result?.status ?? "denied")
+    .catch(() => "denied" as const);
 }
 
 type DirectoryHandle = {
@@ -636,34 +588,31 @@ type DirectoryHandle = {
 };
 
 export async function saveBlob(blob: Blob, filename: string, mime: string) {
-  const native = bridge();
-  if (native) {
-    const host = window as SaveWindow;
-    const picked = await new Promise<boolean>((resolve) => {
-      host.__vellumPicker = (ok) => {
-        host.__vellumPicker = undefined;
-        resolve(Boolean(ok));
-      };
-      native.beginSave(filename, mime || "application/octet-stream");
+  if (hasNativeMessageBridge()) {
+    const picker = await callNative<{ picked: boolean }>("beginSave", {
+      filename,
+      mime: mime || "application/octet-stream",
     });
-    if (!picked) {
+    if (!picker?.picked) {
       const cancelled = new Error("Save cancelled.");
       cancelled.name = "AbortError";
       throw cancelled;
     }
     const bytes = new Uint8Array(await blob.arrayBuffer());
     const step = 48 * 1024;
-    for (let i = 0; i < bytes.length; i += step) {
-      native.writeChunk(await bytesToBase64(bytes.subarray(i, i + step)));
+    try {
+      for (let i = 0; i < bytes.length; i += step) {
+        const written = await callNative<{ written: boolean }>("writeChunk", {
+          data: await bytesToBase64(bytes.subarray(i, i + step)),
+        });
+        if (!written?.written) throw new Error("Could not write that file where you chose.");
+      }
+    } catch (error) {
+      await callNative("finishSave").catch(() => null);
+      throw error;
     }
-    const wrote = await new Promise<boolean>((resolve) => {
-      host.__vellumSaveResult = (ok) => {
-        host.__vellumSaveResult = undefined;
-        resolve(Boolean(ok));
-      };
-      native.finishSave();
-    });
-    if (!wrote) throw new Error("Could not write that file where you chose.");
+    const wrote = await callNative<{ written: boolean }>("finishSave");
+    if (!wrote?.written) throw new Error("Could not write that file where you chose.");
     return;
   }
 

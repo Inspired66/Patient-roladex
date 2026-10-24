@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { Archive, BookUser, ListPlus, Plus, Search } from "lucide-react";
 import { ListSheet } from "@/components/casebook/list-sheet";
 import { ArchiveSheet } from "@/components/casebook/archive-sheet";
+import { MigrationNotice } from "@/components/casebook/migration-page";
 import { PatientDetail } from "@/components/casebook/detail";
 import { ContactPage, DirectorySheet } from "@/components/casebook/directory";
 import { Confirm, ConsultForm, PatientForm, SurgeryForm } from "@/components/casebook/forms";
@@ -50,6 +51,12 @@ export function Casebook() {
   const [contact, setContact] = useState<{ kind: ContactKind; name: string } | null>(null);
 
   useLayoutEffect(() => {
+    if (
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).has("migration")
+    ) {
+      return;
+    }
     bootstrapCasebook();
   }, []);
 
@@ -165,6 +172,7 @@ export function Casebook() {
           </button>
         </div>
       </header>
+      <MigrationNotice />
       <FindPanel open={findOpen} onClose={() => setFindOpen(false)}>
         <div className="find-bar">
           <label className="field-filter">

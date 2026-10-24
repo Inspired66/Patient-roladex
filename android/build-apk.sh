@@ -34,11 +34,13 @@ cp "$ICON" "$WORK/res/mipmap-xxhdpi/ic_launcher.png"
 
 python3 "$ROOT/android/prepare_mlkit.py"
 python3 "$ROOT/android/prepare_opennlp.py"
+python3 "$ROOT/android/prepare_webkit.py"
 MLKIT="$ROOT/android/third_party/mlkit/jars"
 OPENNLP="$ROOT/android/third_party/opennlp/jars"
+WEBKIT="$ROOT/android/third_party/webkit/jars"
 STUBS="$WORK/stubs"
 mkdir -p "$STUBS"
-python3 - "$MLKIT" "$OPENNLP" "$ANDROID_JAR" "$STUBS" << 'PY'
+python3 - "$MLKIT" "$OPENNLP" "$WEBKIT" "$ANDROID_JAR" "$STUBS" << 'PY'
 import os, subprocess, sys, textwrap, zipfile
 jar_dirs, android_jar, stubs = sys.argv[1:-2], sys.argv[-2], sys.argv[-1]
 jar_paths = [
@@ -159,11 +161,14 @@ CP="$ANDROID_JAR:$STUBS/stubs.jar"
 for jar in "$MLKIT"/*.jar "$OPENNLP"/*.jar; do
   CP="$CP:$jar"
 done
+for jar in "$WEBKIT"/*.jar; do
+  CP="$CP:$jar"
+done
 javac --release 17 -classpath "$CP" -d "$WORK/classes" \
   "$ROOT/android/src/com/vellum/casebook/"*.java
 jar cf "$WORK/classes.jar" -C "$WORK/classes" .
 "$BT/d8" --min-api 24 --lib "$ANDROID_JAR" --lib "$STUBS/memory.jar" --output "$WORK/dex" \
-  "$WORK/classes.jar" "$STUBS/stubs.jar" "$MLKIT"/*.jar "$OPENNLP"/*.jar
+  "$WORK/classes.jar" "$STUBS/stubs.jar" "$MLKIT"/*.jar "$OPENNLP"/*.jar "$WEBKIT"/*.jar
 
 "$BT/aapt2" compile --dir "$WORK/res" -o "$WORK/compiled/res.zip"
 "$BT/aapt2" link -o "$WORK/linked.apk" \

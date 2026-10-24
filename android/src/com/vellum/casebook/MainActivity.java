@@ -22,7 +22,6 @@ import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.provider.Settings;
-import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -31,7 +30,16 @@ import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebStorage;
 import android.window.OnBackInvokedDispatcher;
+import androidx.webkit.JavaScriptReplyProxy;
+import androidx.webkit.WebMessageCompat;
+import androidx.webkit.WebViewAssetLoader;
+import androidx.webkit.WebViewCompat;
+import androidx.webkit.WebViewFeature;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.ByteArrayInputStream;
 import java.io.File;
@@ -48,6 +56,10 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -61,10 +73,18 @@ public class MainActivity extends Activity {
   private static final int LIST_REQ = 1006;
   private static final int MAX_SAVE_CHUNK_BYTES = 48 * 1024;
   private static final long MAX_SAVE_BYTES = 64L * 1024L * 1024L;
+  private static final long MAX_MIGRATION_ARCHIVE_BYTES = 512L * 1024L * 1024L;
+  private static final int MAX_MIGRATION_CHUNK_BYTES = 48 * 1024;
+  private static final String ASSET_HOST = "appassets.androidplatform.net";
+  private static final String MIGRATION_DIR = "vellum-migration";
+  private static final Pattern MIGRATION_FILE = Pattern.compile("migration-(\\d+)\\.vellum");
 
   private WebView webView;
   private AssetServer server;
-  private int localPort = -1;
+  private AssetServer migrationServer;
+  private WebViewAssetLoader assetLoader;
+  private int migrationPort = -1;
+  private boolean messageListenerInstalled;
   private ValueCallback<Uri[]> upload;
   private boolean micFromBridge;
   private boolean micAsked;
@@ -89,6 +109,18 @@ public class MainActivity extends Activity {
   private final Set<String> pickerUris = Collections.synchronizedSet(new HashSet<>());
   private String saveName = "vellum.csv";
   private String saveMime = "application/octet-stream";
+  private final Map<String, JavaScriptReplyProxy> pendingReplies = new HashMap<>();
+  private final Set<Integer> completedMigrationPorts = new HashSet<>();
+  private String pendingMicRequestId;
+  private String pendingCameraRequestId;
+  private String pendingSavePickerRequestId;
+  private String pendingSaveFinishRequestId;
+  private String pendingListRequestId;
+  private File migrationTempFile;
+  private OutputStream migrationOutput;
+  private long migrationExpectedBytes;
+  private long migrationWrittenBytes;
+  private int migrationWritePort = -1;
 
   @SuppressLint("SetJavaScriptEnabled")
   @Override
@@ -110,12 +142,23 @@ public class MainActivity extends Activity {
     settings.setAllowContentAccess(true);
     settings.setDatabaseEnabled(true);
     settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
-    webView.addJavascriptInterface(new VellumBridge(), "VellumNative");
+    assetLoader = new WebViewAssetLoader.Builder()
+        .setDomain(ASSET_HOST)
+        .addPathHandler("/", new BundledAssetPathHandler(getAssets()))
+        .build();
+    if (!WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)) {
+      showStartupError("This Android System WebView is too old to open the secure casebook.");
+      setContentView(webView);
+      return;
+    }
+    Set<String> allowedBridgeOrigins = new HashSet<>();
+    allowedBridgeOrigins.add("https://" + ASSET_HOST);
+    installNativeMessageListener(allowedBridgeOrigins);
     webView.setWebViewClient(new WebViewClient() {
       @Override
       public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
         Uri url = request.getUrl();
-        if (isTrustedLocalOrigin(url)) return false;
+        if (isTrustedAssetOrigin(url) || isTrustedMigrationOrigin(url)) return false;
         openExternal(url);
         return true;
       }
@@ -124,7 +167,8 @@ public class MainActivity extends Activity {
       public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
         Uri url = request.getUrl();
         String scheme = url.getScheme();
-        if (isTrustedLocalOrigin(url)
+        if (isTrustedAssetOrigin(url)) return assetLoader.shouldInterceptRequest(url);
+        if (isTrustedMigrationOrigin(url)
             || "data".equalsIgnoreCase(scheme)
             || "blob".equalsIgnoreCase(scheme)
             || isPickerUri(url)) {
@@ -147,6 +191,10 @@ public class MainActivity extends Activity {
 
       @Override
       public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
+        if (!isTrustedCurrentPage()) {
+          callback.onReceiveValue(null);
+          return true;
+        }
         if (upload != null) upload.onReceiveValue(null);
         upload = callback;
         try {
@@ -158,16 +206,20 @@ public class MainActivity extends Activity {
       }
     });
     setContentView(webView);
-    server = new AssetServer(getAssets());
-    try {
-      localPort = server.start();
-      webView.loadUrl("http://127.0.0.1:" + localPort + "/");
-    } catch (Exception error) {
-      webView.loadData("<p style='font-family:sans-serif'>Could not open the casebook.</p>", "text/html", "utf-8");
-    }
+    webView.loadUrl("https://" + ASSET_HOST + "/");
+    completedMigrationPorts.addAll(readCompletedMigrationPorts());
+    discardInterruptedMigrationFiles();
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       getOnBackInvokedDispatcher().registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::handleBack);
     }
+  }
+
+  private void showStartupError(String message) {
+    webView.loadData(
+        "<main style='font:16px sans-serif;padding:24px;color:#f4f1e8;background:#0c0d0f'>"
+            + "<h1>Vellum could not open</h1><p>" + message + "</p></main>",
+        "text/html",
+        "utf-8");
   }
 
   private void handleBack() {
@@ -208,22 +260,707 @@ public class MainActivity extends Activity {
     return cameraOutput;
   }
 
-  private boolean isTrustedLocalOrigin(Uri uri) {
+  private boolean isTrustedAssetOrigin(Uri uri) {
     return uri != null
-        && localPort > 0
+        && NativeOriginPolicy.isTrusted(uri.getScheme(), uri.getHost(), uri.getPort())
+        && uri.getUserInfo() == null;
+  }
+
+  private boolean isTrustedMigrationOrigin(Uri uri) {
+    return uri != null
+        && migrationPort > 0
         && "http".equalsIgnoreCase(uri.getScheme())
         && "127.0.0.1".equals(uri.getHost())
-        && uri.getPort() == localPort
+        && uri.getPort() == migrationPort
         && uri.getUserInfo() == null;
+  }
+
+  private boolean isTrustedBridgeOrigin(Uri uri) {
+    if (isTrustedAssetOrigin(uri)) return true;
+    return isTrustedMigrationOrigin(uri) && isTrustedMigrationPage();
+  }
+
+  private void installNativeMessageListener(Set<String> allowedOrigins) {
+    if (messageListenerInstalled) {
+      WebViewCompat.removeWebMessageListener(webView, "VellumNative");
+    }
+    WebViewCompat.addWebMessageListener(
+        webView,
+        "VellumNative",
+        allowedOrigins,
+        new WebViewCompat.WebMessageListener() {
+          @Override
+          public void onPostMessage(
+              WebView view,
+              WebMessageCompat message,
+              Uri sourceOrigin,
+              boolean isMainFrame,
+              JavaScriptReplyProxy replyProxy) {
+            if (!isMainFrame || !isTrustedBridgeOrigin(sourceOrigin)) return;
+            handleNativeMessage(message.getData(), replyProxy);
+          }
+        });
+    messageListenerInstalled = true;
+  }
+
+  private void installSecureMessageListener() {
+    Set<String> allowedOrigins = new HashSet<>();
+    allowedOrigins.add("https://" + ASSET_HOST);
+    installNativeMessageListener(allowedOrigins);
+  }
+
+  private boolean isTrustedMigrationPage() {
+    String url = webView == null ? null : webView.getUrl();
+    if (url == null) return false;
+    Uri uri = Uri.parse(url);
+    return isTrustedMigrationOrigin(uri)
+        && "/".equals(uri.getPath())
+        && "source".equals(uri.getQueryParameter("migration"))
+        && Integer.toString(migrationPort).equals(uri.getQueryParameter("port"));
   }
 
   private boolean isTrustedCurrentPage() {
     String url = webView == null ? null : webView.getUrl();
-    return url != null && isTrustedLocalOrigin(Uri.parse(url));
+    return url != null && isTrustedAssetOrigin(Uri.parse(url));
   }
 
   private boolean isPickerUri(Uri uri) {
     return uri != null && pickerUris.contains(uri.toString());
+  }
+
+  private void handleNativeMessage(String raw, JavaScriptReplyProxy replyProxy) {
+    try {
+      JSONObject request = new JSONObject(raw);
+      String id = request.optString("id", "");
+      String action = request.optString("action", "");
+      JSONObject payload = request.optJSONObject("payload");
+      if (id.isEmpty() || id.length() > 96 || action.isEmpty()) return;
+      if (!isActionAllowed(action)) {
+        sendNativeError(replyProxy, id, "That phone action is not allowed from this page.");
+        return;
+      }
+      if (pendingReplies.containsKey(id)) {
+        sendNativeError(replyProxy, id, "That request is already in progress.");
+        return;
+      }
+      pendingReplies.put(id, replyProxy);
+      switch (action) {
+        case "beginMicrophoneCapture":
+          beginMicrophoneCapture(id);
+          break;
+        case "endMicrophoneCapture":
+          clearMicrophoneCapture();
+          sendNativeResult(id, new JSONObject());
+          break;
+        case "requestCamera":
+          requestCamera(id);
+          break;
+        case "readList":
+          readList(id);
+          break;
+        case "beginSave":
+          beginSave(id, payload);
+          break;
+        case "writeChunk":
+          writeChunk(id, payload);
+          break;
+        case "finishSave":
+          finishSave(id);
+          break;
+        case "migrationStatus":
+          migrationStatus(id);
+          break;
+        case "beginLegacyMigration":
+          beginLegacyMigration(id, payload);
+          break;
+        case "beginMigrationArchive":
+          beginMigrationArchive(id, payload);
+          break;
+        case "writeMigrationChunk":
+          writeMigrationChunk(id, payload);
+          break;
+        case "finishMigrationArchive":
+          finishMigrationArchive(id, payload);
+          break;
+        case "migrationArchiveInfo":
+          migrationArchiveInfo(id, payload);
+          break;
+        case "readMigrationChunk":
+          readMigrationChunk(id, payload);
+          break;
+        case "completeMigration":
+          completeMigration(id, payload);
+          break;
+        case "cancelMigration":
+          cancelMigration(id);
+          break;
+        default:
+          sendNativeError(id, "That phone action is not available.");
+      }
+    } catch (JSONException error) {
+      sendNativeError(replyProxy, "", "The phone could not read that request.");
+    }
+  }
+
+  private void sendNativeResult(String id, JSONObject result) {
+    JavaScriptReplyProxy proxy = pendingReplies.remove(id);
+    if (proxy == null) return;
+    sendNativeResult(proxy, id, result);
+  }
+
+  private void sendNativeResult(JavaScriptReplyProxy proxy, String id, JSONObject result) {
+    JSONObject response = new JSONObject();
+    try {
+      response.put("id", id);
+      response.put("ok", true);
+      response.put("result", result == null ? JSONObject.NULL : result);
+      proxy.postMessage(response.toString());
+    } catch (JSONException ignored) {
+      sendNativeError(proxy, id, "The phone could not prepare that response.");
+    }
+  }
+
+  private void sendNativeError(String id, String message) {
+    JavaScriptReplyProxy proxy = pendingReplies.remove(id);
+    if (proxy != null) sendNativeError(proxy, id, message);
+  }
+
+  private void sendNativeError(JavaScriptReplyProxy proxy, String id, String message) {
+    JSONObject response = new JSONObject();
+    try {
+      response.put("id", id);
+      response.put("ok", false);
+      response.put("error", message);
+      proxy.postMessage(response.toString());
+    } catch (JSONException ignored) {
+      // A fixed error object cannot fail JSON encoding.
+    }
+  }
+
+  private boolean isActionAllowed(String action) {
+    switch (action) {
+      case "beginMicrophoneCapture":
+      case "endMicrophoneCapture":
+      case "requestCamera":
+      case "readList":
+      case "beginSave":
+      case "writeChunk":
+      case "finishSave":
+      case "migrationStatus":
+      case "beginLegacyMigration":
+      case "migrationArchiveInfo":
+      case "readMigrationChunk":
+      case "completeMigration":
+        return isTrustedCurrentPage();
+      case "beginMigrationArchive":
+      case "writeMigrationChunk":
+      case "finishMigrationArchive":
+      case "cancelMigration":
+        return isTrustedMigrationPage();
+      default:
+        return false;
+    }
+  }
+
+  private JSONObject statusResult(String key, Object value) {
+    JSONObject result = new JSONObject();
+    try {
+      result.put(key, value);
+    } catch (JSONException ignored) {
+      // The fixed fields and scalar values are always encodable.
+    }
+    return result;
+  }
+
+  private void beginMicrophoneCapture(String requestId) {
+    if (pendingMicRequestId != null) {
+      sendNativeError(requestId, "A microphone request is already in progress.");
+      return;
+    }
+    clearMicrophoneCapture();
+    if (!isTrustedCurrentPage()) {
+      sendNativeResult(requestId, statusResult("status", "denied"));
+      return;
+    }
+    if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+      micCaptureArmed = true;
+      micCaptureArmExpiresAt = SystemClock.elapsedRealtime() + 10_000;
+      pendingMicRequestId = requestId;
+      signalMic(true, "granted");
+      return;
+    }
+    if (micAsked && !shouldShowRequestPermissionRationale(android.Manifest.permission.RECORD_AUDIO)) {
+      pendingMicRequestId = requestId;
+      signalMic(false, "settings");
+      openPermissionSettings();
+      return;
+    }
+    pendingMicRequestId = requestId;
+    micAsked = true;
+    micFromBridge = true;
+    micRequestExpiresAt = SystemClock.elapsedRealtime() + 60_000;
+    requestPermissions(new String[] {android.Manifest.permission.RECORD_AUDIO}, MIC_REQ);
+  }
+
+  private void requestCamera(String requestId) {
+    if (!isTrustedCurrentPage()) {
+      sendNativeResult(requestId, statusResult("status", "denied"));
+      return;
+    }
+    if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+      sendNativeResult(requestId, statusResult("status", "granted"));
+      return;
+    }
+    pendingCameraRequestId = requestId;
+    if (camAsked && !shouldShowRequestPermissionRationale(android.Manifest.permission.CAMERA)) {
+      openPermissionSettings();
+      signalCam(false, "settings");
+      return;
+    }
+    camAsked = true;
+    camFromBridge = true;
+    requestPermissions(new String[] {android.Manifest.permission.CAMERA}, CAM_REQ);
+  }
+
+  private void readList(String requestId) {
+    pendingListRequestId = requestId;
+    try {
+      Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+      intent.addCategory(Intent.CATEGORY_OPENABLE);
+      intent.setType("*/*");
+      intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {"image/*", "application/pdf"});
+      intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+      startActivityForResult(Intent.createChooser(intent, "Upload list"), LIST_REQ);
+    } catch (ActivityNotFoundException error) {
+      signalList(false, "", "This phone has no app that can open a photo or PDF.");
+    }
+  }
+
+  private void beginSave(String requestId, JSONObject payload) {
+    String filename = payload == null ? null : payload.optString("filename", null);
+    String mime = payload == null ? null : payload.optString("mime", null);
+    if (savePickerOpen || saveReady || saveBuffer != null) {
+      sendNativeError(requestId, "Another file save is already in progress.");
+      return;
+    }
+    if (!NativeSavePolicy.isAllowed(filename, mime)) {
+      sendNativeResult(requestId, new JSONObject());
+      return;
+    }
+    pendingSavePickerRequestId = requestId;
+    savePickerOpen = true;
+    saveName = filename;
+    saveMime = mime;
+    Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+    intent.addCategory(Intent.CATEGORY_OPENABLE);
+    intent.setType(saveMime);
+    intent.putExtra(Intent.EXTRA_TITLE, saveName);
+    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+    try {
+      startActivityForResult(intent, SAVE_REQ);
+    } catch (ActivityNotFoundException error) {
+      savePickerOpen = false;
+      signalPicker(false);
+    }
+  }
+
+  private void writeChunk(String requestId, JSONObject payload) {
+    String base64 = payload == null ? null : payload.optString("data", null);
+    boolean written = false;
+    if (base64 != null && !base64.isEmpty()
+        && base64.length() <= (MAX_SAVE_CHUNK_BYTES * 4 / 3) + 4) {
+      try {
+        byte[] bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT);
+        synchronized (saveLock) {
+          if (saveReady && saveBuffer != null && !saveFailed
+              && bytes.length > 0 && bytes.length <= MAX_SAVE_CHUNK_BYTES
+              && bytes.length <= MAX_SAVE_BYTES - saveBytes) {
+            saveBuffer.write(bytes);
+            saveBytes += bytes.length;
+            written = true;
+          } else if (saveReady) {
+            saveFailed = true;
+          }
+        }
+      } catch (IllegalArgumentException | IOException error) {
+        synchronized (saveLock) {
+          if (saveReady) saveFailed = true;
+        }
+      }
+    }
+    sendNativeResult(requestId, statusResult("written", written));
+  }
+
+  private void finishSave(String requestId) {
+    pendingSaveFinishRequestId = requestId;
+    final Uri tree;
+    final File buffer;
+    boolean failed;
+    synchronized (saveLock) {
+      if (!saveReady || saveTree == null || saveBuffer == null || saveBufferFile == null) {
+        signalSaved(false);
+        return;
+      }
+      saveReady = false;
+      failed = saveFailed || saveBytes == 0;
+      try {
+        saveBuffer.close();
+      } catch (IOException error) {
+        saveFailed = true;
+      }
+      tree = saveTree;
+      buffer = saveBufferFile;
+      saveTree = null;
+      saveBuffer = null;
+      saveBufferFile = null;
+      saveBytes = 0;
+      failed = failed || saveFailed;
+      saveFailed = false;
+    }
+    if (failed) {
+      deleteSaveBuffer(buffer);
+      signalSaved(false);
+      return;
+    }
+    new Thread(() -> {
+      boolean wrote = writeDocument(tree, buffer);
+      deleteSaveBuffer(buffer);
+      signalSaved(wrote);
+    }, "vellum-save").start();
+  }
+
+  private File migrationDirectory() throws IOException {
+    File directory = new File(getFilesDir(), MIGRATION_DIR);
+    if (!directory.isDirectory() && !directory.mkdirs()) {
+      throw new IOException("Could not prepare private migration storage.");
+    }
+    return directory;
+  }
+
+  private Set<Integer> readCompletedMigrationPorts() {
+    Set<Integer> result = new HashSet<>();
+    Set<String> stored = getSharedPreferences("vellum-migration", MODE_PRIVATE)
+        .getStringSet("completedPorts", Collections.emptySet());
+    for (String value : stored) {
+      try {
+        result.add(Integer.parseInt(value));
+      } catch (NumberFormatException ignored) {
+        // Ignore malformed local migration markers.
+      }
+    }
+    return result;
+  }
+
+  private void migrationStatus(String requestId) {
+    WebStorage.getInstance().getOrigins(origins -> {
+      JSONArray legacyOrigins = new JSONArray();
+      Set<Integer> done = readCompletedMigrationPorts();
+      for (Object originValue : origins.keySet()) {
+        if (!(originValue instanceof String)) continue;
+        String origin = (String) originValue;
+        Uri uri = Uri.parse(origin);
+        int port = uri.getPort();
+        if ("http".equalsIgnoreCase(uri.getScheme())
+            && "127.0.0.1".equals(uri.getHost())
+            && port > 0
+            && !done.contains(port)) {
+          JSONObject item = new JSONObject();
+          try {
+            item.put("port", port);
+            legacyOrigins.put(item);
+          } catch (JSONException ignored) {
+            // Integer port fields are always encodable.
+          }
+        }
+      }
+      JSONArray archives = new JSONArray();
+      File directory;
+      try {
+        directory = migrationDirectory();
+      } catch (IOException error) {
+        sendNativeError(requestId, "Private migration storage is unavailable.");
+        return;
+      }
+      File[] files = directory.listFiles();
+      if (files != null) {
+        for (File file : files) {
+          Matcher match = MIGRATION_FILE.matcher(file.getName());
+          if (!match.matches()) continue;
+          int port;
+          try {
+            port = Integer.parseInt(match.group(1));
+          } catch (NumberFormatException ignored) {
+            continue;
+          }
+          if (done.contains(port)) continue;
+          JSONObject item = new JSONObject();
+          try {
+            item.put("port", port);
+            item.put("bytes", file.length());
+            archives.put(item);
+          } catch (JSONException ignored) {
+            // Integer and long fields are always encodable.
+          }
+        }
+      }
+      JSONObject result = new JSONObject();
+      try {
+        result.put("legacyOrigins", legacyOrigins);
+        result.put("archives", archives);
+        sendNativeResult(requestId, result);
+      } catch (JSONException error) {
+        sendNativeError(requestId, "Could not read migration status.");
+      }
+    });
+  }
+
+  private void beginLegacyMigration(String requestId, JSONObject payload) {
+    int port = payload == null ? -1 : payload.optInt("port", -1);
+    WebStorage.getInstance().getOrigins(origins -> {
+      boolean found = false;
+      for (Object originValue : origins.keySet()) {
+        if (!(originValue instanceof String)) continue;
+        String origin = (String) originValue;
+        Uri parsed = Uri.parse(origin);
+        if ("http".equalsIgnoreCase(parsed.getScheme())
+            && "127.0.0.1".equals(parsed.getHost())
+            && parsed.getPort() == port) {
+          found = true;
+          break;
+        }
+      }
+      if (!found || port <= 0 || readCompletedMigrationPorts().contains(port)) {
+        sendNativeError(requestId, "That older casebook origin is no longer available.");
+        return;
+      }
+      try {
+        if (migrationServer != null) migrationServer.stop();
+        migrationServer = new AssetServer(getAssets());
+        migrationServer.start(port);
+        migrationPort = port;
+        Set<String> allowedOrigins = new HashSet<>();
+        allowedOrigins.add("https://" + ASSET_HOST);
+        allowedOrigins.add("http://127.0.0.1:" + port);
+        installNativeMessageListener(allowedOrigins);
+        sendNativeResult(requestId, statusResult("started", true));
+        webView.loadUrl("http://127.0.0.1:" + port + "/?migration=source&port=" + port);
+      } catch (IOException error) {
+        migrationPort = -1;
+        if (migrationServer != null) migrationServer.stop();
+        migrationServer = null;
+        sendNativeError(requestId, "The older casebook could not be opened safely.");
+      }
+    });
+  }
+
+  private boolean isValidMigrationPort(int port) {
+    return port > 0 && port <= 65535 && migrationPort == port && isTrustedMigrationPage();
+  }
+
+  private void beginMigrationArchive(String requestId, JSONObject payload) {
+    int port = payload == null ? -1 : payload.optInt("port", -1);
+    long expected = payload == null ? -1 : payload.optLong("bytes", -1);
+    if (!isValidMigrationPort(port) || expected < 43 || expected > MAX_MIGRATION_ARCHIVE_BYTES) {
+      sendNativeError(requestId, "The encrypted migration archive is invalid or too large.");
+      return;
+    }
+    if (migrationOutput != null) {
+      sendNativeError(requestId, "Another migration archive is already being written.");
+      return;
+    }
+    try {
+      File directory = migrationDirectory();
+      File archived = new File(directory, "migration-" + port + ".vellum");
+      if (archived.exists()) {
+        sendNativeError(requestId, "A migration archive for this origin is already stored.");
+        return;
+      }
+      migrationTempFile = new File(directory, "migration-" + port + ".tmp");
+      if (migrationTempFile.exists() && !migrationTempFile.delete()) {
+        sendNativeError(requestId, "An incomplete migration file could not be cleared.");
+        return;
+      }
+      migrationOutput = new FileOutputStream(migrationTempFile, false);
+      migrationWritePort = port;
+      migrationExpectedBytes = expected;
+      migrationWrittenBytes = 0;
+      sendNativeResult(requestId, statusResult("started", true));
+    } catch (IOException error) {
+      clearMigrationWrite();
+      sendNativeError(requestId, "Private migration storage is unavailable.");
+    }
+  }
+
+  private void writeMigrationChunk(String requestId, JSONObject payload) {
+    int port = payload == null ? -1 : payload.optInt("port", -1);
+    String data = payload == null ? null : payload.optString("data", null);
+    if (!isValidMigrationPort(port) || migrationOutput == null || migrationWritePort != port
+        || data == null || data.isEmpty() || data.length() > (MAX_MIGRATION_CHUNK_BYTES * 4 / 3) + 4) {
+      sendNativeError(requestId, "The migration archive transfer is out of sequence.");
+      return;
+    }
+    try {
+      byte[] bytes = android.util.Base64.decode(data, android.util.Base64.DEFAULT);
+      if (bytes.length == 0 || bytes.length > MAX_MIGRATION_CHUNK_BYTES
+          || bytes.length > migrationExpectedBytes - migrationWrittenBytes) {
+        clearMigrationWrite();
+        sendNativeError(requestId, "The migration archive exceeded its declared size.");
+        return;
+      }
+      migrationOutput.write(bytes);
+      migrationWrittenBytes += bytes.length;
+      JSONObject result = new JSONObject();
+      result.put("written", true);
+      sendNativeResult(requestId, result);
+    } catch (IllegalArgumentException | IOException | JSONException error) {
+      clearMigrationWrite();
+      sendNativeError(requestId, "The encrypted migration archive could not be written.");
+    }
+  }
+
+  private void finishMigrationArchive(String requestId, JSONObject payload) {
+    int port = payload == null ? -1 : payload.optInt("port", -1);
+    if (!isValidMigrationPort(port) || migrationOutput == null || migrationWritePort != port) {
+      sendNativeError(requestId, "The migration archive transfer is out of sequence.");
+      return;
+    }
+    File temp = migrationTempFile;
+    try {
+      if (migrationWrittenBytes != migrationExpectedBytes) {
+        throw new IOException("Migration archive was incomplete.");
+      }
+      migrationOutput.flush();
+      if (migrationOutput instanceof FileOutputStream) {
+        ((FileOutputStream) migrationOutput).getFD().sync();
+      }
+      migrationOutput.close();
+      migrationOutput = null;
+      if (!hasArchiveMagic(temp)) throw new IOException("Migration archive verification failed.");
+      File archived = new File(migrationDirectory(), "migration-" + port + ".vellum");
+      if (!temp.renameTo(archived)) throw new IOException("Could not finalize migration archive.");
+      migrationTempFile = null;
+      migrationWritePort = -1;
+      migrationExpectedBytes = 0;
+      migrationWrittenBytes = 0;
+      sendNativeResult(requestId, statusResult("verified", true));
+      if (migrationServer != null) migrationServer.stop();
+      migrationServer = null;
+      migrationPort = -1;
+      installSecureMessageListener();
+      webView.loadUrl("https://" + ASSET_HOST + "/?migration=restore&port=" + port);
+    } catch (IOException error) {
+      clearMigrationWrite();
+      sendNativeError(requestId, "The encrypted migration archive could not be verified.");
+    }
+  }
+
+  private boolean hasArchiveMagic(File file) {
+    byte[] expected = "VELLUM1".getBytes(StandardCharsets.US_ASCII);
+    if (file == null || !file.isFile() || file.length() < 35) return false;
+    try (InputStream input = new FileInputStream(file)) {
+      for (byte value : expected) {
+        if (input.read() != (value & 0xff)) return false;
+      }
+      return true;
+    } catch (IOException error) {
+      return false;
+    }
+  }
+
+  private void clearMigrationWrite() {
+    if (migrationOutput != null) {
+      try {
+        migrationOutput.close();
+      } catch (IOException ignored) {
+        // The temporary archive will be discarded.
+      }
+    }
+    migrationOutput = null;
+    if (migrationTempFile != null) migrationTempFile.delete();
+    migrationTempFile = null;
+    migrationWritePort = -1;
+    migrationExpectedBytes = 0;
+    migrationWrittenBytes = 0;
+  }
+
+  private void discardInterruptedMigrationFiles() {
+    try {
+      File[] files = migrationDirectory().listFiles();
+      if (files == null) return;
+      for (File file : files) {
+        if (file.getName().endsWith(".tmp")) file.delete();
+      }
+    } catch (IOException ignored) {
+      // Storage failures are reported when a migration is requested.
+    }
+  }
+
+  private void cancelMigration(String requestId) {
+    clearMigrationWrite();
+    if (migrationServer != null) migrationServer.stop();
+    migrationServer = null;
+    migrationPort = -1;
+    installSecureMessageListener();
+    sendNativeResult(requestId, new JSONObject());
+    webView.loadUrl("https://" + ASSET_HOST + "/");
+  }
+
+  private File migrationArchive(int port) throws IOException {
+    if (port <= 0 || port > 65535) throw new IOException("Invalid archive origin.");
+    File archive = new File(migrationDirectory(), "migration-" + port + ".vellum");
+    if (!archive.isFile() || !hasArchiveMagic(archive)) {
+      throw new IOException("The encrypted migration archive is unavailable.");
+    }
+    return archive;
+  }
+
+  private void migrationArchiveInfo(String requestId, JSONObject payload) {
+    int port = payload == null ? -1 : payload.optInt("port", -1);
+    try {
+      File archive = migrationArchive(port);
+      JSONObject result = new JSONObject();
+      result.put("bytes", archive.length());
+      sendNativeResult(requestId, result);
+    } catch (IOException | JSONException error) {
+      sendNativeError(requestId, "The encrypted migration archive is unavailable.");
+    }
+  }
+
+  private void readMigrationChunk(String requestId, JSONObject payload) {
+    int port = payload == null ? -1 : payload.optInt("port", -1);
+    long offset = payload == null ? -1 : payload.optLong("offset", -1);
+    try {
+      File archive = migrationArchive(port);
+      if (offset < 0 || offset >= archive.length()) throw new IOException("Invalid archive offset.");
+      int length = (int) Math.min(MAX_MIGRATION_CHUNK_BYTES, archive.length() - offset);
+      byte[] bytes = new byte[length];
+      try (java.io.RandomAccessFile input = new java.io.RandomAccessFile(archive, "r")) {
+        input.seek(offset);
+        input.readFully(bytes);
+      }
+      JSONObject result = new JSONObject();
+      result.put("data", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP));
+      result.put("offset", offset);
+      sendNativeResult(requestId, result);
+    } catch (IOException | JSONException error) {
+      sendNativeError(requestId, "The encrypted migration archive could not be read.");
+    }
+  }
+
+  private void completeMigration(String requestId, JSONObject payload) {
+    int port = payload == null ? -1 : payload.optInt("port", -1);
+    try {
+      migrationArchive(port);
+      completedMigrationPorts.add(port);
+      Set<String> stored = new HashSet<>();
+      for (Integer completed : completedMigrationPorts) stored.add(Integer.toString(completed));
+      getSharedPreferences("vellum-migration", MODE_PRIVATE)
+          .edit().putStringSet("completedPorts", stored).apply();
+      sendNativeResult(requestId, new JSONObject());
+      webView.loadUrl("https://" + ASSET_HOST + "/");
+    } catch (IOException error) {
+      sendNativeError(requestId, "The migration cannot be marked complete yet.");
+    }
   }
 
   private void launchNativeChooser() {
@@ -344,7 +1081,6 @@ public class MainActivity extends Activity {
         origin == null ? null : origin.getScheme(),
         origin == null ? null : origin.getHost(),
         origin == null ? -1 : origin.getPort(),
-        localPort,
         request.getResources(),
         checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED,
         micCaptureArmed,
@@ -369,8 +1105,16 @@ public class MainActivity extends Activity {
   }
 
   private void signalMic(boolean granted, String reason) {
-    if (webView == null) return;
-    webView.evaluateJavascript("window.__vellumMic&&window.__vellumMic(" + granted + ",'" + reason + "')", null);
+    String requestId = pendingMicRequestId;
+    pendingMicRequestId = null;
+    if (requestId == null) return;
+    try {
+      JSONObject result = new JSONObject();
+      result.put("status", granted ? "granted" : reason);
+      sendNativeResult(requestId, result);
+    } catch (JSONException error) {
+      sendNativeError(requestId, "The phone could not prepare the microphone response.");
+    }
   }
 
   private void clearMicrophoneCapture() {
@@ -382,8 +1126,16 @@ public class MainActivity extends Activity {
   }
 
   private void signalCam(boolean granted, String reason) {
-    if (webView == null) return;
-    webView.evaluateJavascript("window.__vellumCam&&window.__vellumCam(" + granted + ",'" + reason + "')", null);
+    String requestId = pendingCameraRequestId;
+    pendingCameraRequestId = null;
+    if (requestId == null) return;
+    try {
+      JSONObject result = new JSONObject();
+      result.put("status", granted ? "granted" : reason);
+      sendNativeResult(requestId, result);
+    } catch (JSONException error) {
+      sendNativeError(requestId, "The phone could not prepare the camera response.");
+    }
   }
 
   private void signalPhoto(boolean ok) {
@@ -391,14 +1143,18 @@ public class MainActivity extends Activity {
   }
 
   private void signalList(boolean ok, String payloadJson, String message) {
-    if (webView == null) return;
-    String payload = payloadJson == null || payloadJson.length() == 0
-        ? ""
-        : android.util.Base64.encodeToString(payloadJson.getBytes(StandardCharsets.UTF_8), android.util.Base64.NO_WRAP);
-    String safe = jsString(message);
-    webView.evaluateJavascript(
-        "window.__vellumListDone&&window.__vellumListDone(" + ok + ",'" + payload + "','" + safe + "')",
-        null);
+    String requestId = pendingListRequestId;
+    pendingListRequestId = null;
+    if (requestId == null) return;
+    try {
+      if (!ok) {
+        sendNativeError(requestId, message.isEmpty() ? "The document could not be processed locally." : message);
+        return;
+      }
+      sendNativeResult(requestId, new JSONObject(payloadJson));
+    } catch (JSONException error) {
+      sendNativeError(requestId, "The local extraction result could not be read.");
+    }
   }
 
   private void readListUri(Uri uri) {
@@ -614,15 +1370,29 @@ public class MainActivity extends Activity {
   }
 
   private void signalPicker(boolean ok) {
-    if (webView == null) return;
-    webView.evaluateJavascript("window.__vellumPicker&&window.__vellumPicker(" + ok + ")", null);
+    String requestId = pendingSavePickerRequestId;
+    pendingSavePickerRequestId = null;
+    if (requestId == null) return;
+    try {
+      JSONObject result = new JSONObject();
+      result.put("picked", ok);
+      sendNativeResult(requestId, result);
+    } catch (JSONException error) {
+      sendNativeError(requestId, "The phone could not prepare the file picker response.");
+    }
   }
 
   private void signalSaved(boolean ok) {
-    runOnUiThread(() -> {
-      if (webView == null) return;
-      webView.evaluateJavascript("window.__vellumSaveResult&&window.__vellumSaveResult(" + ok + ")", null);
-    });
+    String requestId = pendingSaveFinishRequestId;
+    pendingSaveFinishRequestId = null;
+    if (requestId == null) return;
+    try {
+      JSONObject result = new JSONObject();
+      result.put("written", ok);
+      sendNativeResult(requestId, result);
+    } catch (JSONException error) {
+      sendNativeError(requestId, "The phone could not prepare the file result.");
+    }
   }
 
   private boolean writeDocument(Uri document, File buffer) {
@@ -671,7 +1441,6 @@ public class MainActivity extends Activity {
   }
 
   public final class VellumBridge {
-    @JavascriptInterface
     public void beginMicrophoneCapture() {
       runOnUiThread(() -> {
         clearMicrophoneCapture();
@@ -697,12 +1466,10 @@ public class MainActivity extends Activity {
       });
     }
 
-    @JavascriptInterface
     public void endMicrophoneCapture() {
       runOnUiThread(MainActivity.this::clearMicrophoneCapture);
     }
 
-    @JavascriptInterface
     public void requestCamera() {
       runOnUiThread(() -> {
         if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -720,7 +1487,6 @@ public class MainActivity extends Activity {
       });
     }
 
-    @JavascriptInterface
     public void openCamera() {
       runOnUiThread(() -> {
         if (checkSelfPermission(android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -735,7 +1501,6 @@ public class MainActivity extends Activity {
       });
     }
 
-    @JavascriptInterface
     public void readList() {
       runOnUiThread(() -> {
         try {
@@ -751,12 +1516,10 @@ public class MainActivity extends Activity {
       });
     }
 
-    @JavascriptInterface
     public void openAttach() {
       runOnUiThread(MainActivity.this::launchAttachChooser);
     }
 
-    @JavascriptInterface
     public void openFiles() {
       runOnUiThread(() -> {
         try {
@@ -772,7 +1535,6 @@ public class MainActivity extends Activity {
       });
     }
 
-    @JavascriptInterface
     public void openRecorder() {
       runOnUiThread(() -> {
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -788,7 +1550,6 @@ public class MainActivity extends Activity {
       });
     }
 
-    @JavascriptInterface
     public void beginSave(String filename, String mime) {
       runOnUiThread(() -> {
         if (savePickerOpen || saveReady || saveBuffer != null) {
@@ -815,7 +1576,6 @@ public class MainActivity extends Activity {
       });
     }
 
-    @JavascriptInterface
     public void writeChunk(String base64) {
       if (base64 == null || base64.isEmpty()
           || base64.length() > (MAX_SAVE_CHUNK_BYTES * 4 / 3) + 4) {
@@ -843,7 +1603,6 @@ public class MainActivity extends Activity {
       }
     }
 
-    @JavascriptInterface
     public void finishSave() {
       final Uri tree;
       final File buffer;
@@ -1112,6 +1871,7 @@ public class MainActivity extends Activity {
           "window.__vellumAbortRecording&&window.__vellumAbortRecording();"
               + "window.__vellumMicPause&&window.__vellumMicPause()",
           null);
+      if (pendingMicRequestId != null) signalMic(false, "denied");
     }
     super.onPause();
   }
@@ -1120,6 +1880,9 @@ public class MainActivity extends Activity {
   protected void onDestroy() {
     clearMicrophoneCapture();
     if (server != null) server.stop();
+    if (migrationServer != null) migrationServer.stop();
+    migrationServer = null;
+    clearMigrationWrite();
     dropCameraOutput();
     synchronized (saveLock) {
       try {
@@ -1134,6 +1897,7 @@ public class MainActivity extends Activity {
       saveReady = false;
     }
     pickerUris.clear();
+    pendingReplies.clear();
     if (webView != null) webView.destroy();
     super.onDestroy();
   }

@@ -61,20 +61,28 @@ class WebAssetCheckTest(unittest.TestCase):
         for mode in ("cloud-backup", "device-transfer"):
             self.assertEqual(expected, {node.get("domain") for node in extraction.findall(f"./{mode}/exclude")})
 
-    def test_webview_source_pins_local_origin_and_blocks_remote_resources(self) -> None:
+    def test_webview_uses_asset_loader_and_origin_verified_message_bridge(self) -> None:
         source = (Path(__file__).parent / "src/com/vellum/casebook/MainActivity.java").read_text(encoding="utf-8")
         self.assertIn("setAllowFileAccess(false)", source)
         self.assertIn("setAllowContentAccess(true)", source)
         self.assertIn("setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW)", source)
         self.assertIn("WebView.setWebContentsDebuggingEnabled(false)", source)
-        self.assertIn("uri.getPort() == localPort", source)
+        self.assertIn("new WebViewAssetLoader.Builder()", source)
+        self.assertIn("WebViewCompat.addWebMessageListener", source)
+        self.assertIn("if (!isMainFrame || !isTrustedBridgeOrigin(sourceOrigin)) return;", source)
+        self.assertIn('"http://127.0.0.1:" + port', source)
+        self.assertNotIn('127.0.0.1:*', source)
+        self.assertIn("NativeOriginPolicy.isTrusted", source)
         self.assertIn("shouldInterceptRequest", source)
         self.assertIn("FLAG_SECURE", source)
+        self.assertNotIn("addJavascriptInterface", source)
+        self.assertNotIn("@JavascriptInterface", source)
 
-    def test_android_build_scans_packaged_assets_and_disables_extensions(self) -> None:
+    def test_android_build_uses_pinned_webkit_and_scans_packaged_assets(self) -> None:
         build = Path(__file__).with_name("build-apk.sh").read_text(encoding="utf-8")
         self.assertIn("export VITE_GROK_EXTENSIONS=0", build)
         self.assertIn('check-web-assets.py" "$WORK/apkroot/assets/www"', build)
+        self.assertIn('prepare_webkit.py"', build)
 
 
 if __name__ == "__main__":

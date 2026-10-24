@@ -15,7 +15,7 @@ import type {
   SurgeryInput,
 } from "./types";
 
-const STORAGE_KEY = "vellum-casebook-v1";
+export const CASEBOOK_STORAGE_KEY = "vellum-casebook-v1";
 export const CASEBOOK_SCHEMA_VERSION = 1;
 let storageWritesEnabled = true;
 
@@ -398,7 +398,7 @@ export const useCasebook = create<CasebookState>()(
       },
     }),
     {
-      name: STORAGE_KEY,
+      name: CASEBOOK_STORAGE_KEY,
       version: CASEBOOK_SCHEMA_VERSION,
       skipHydration: true,
       storage: createJSONStorage(() => ({
@@ -419,7 +419,7 @@ export function bootstrapCasebook() {
   if (bootstrapped || typeof window === "undefined") return;
   bootstrapped = true;
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(CASEBOOK_STORAGE_KEY);
     if (raw) {
       const { patients, contacts } = migrateStoredCasebook(raw);
       storageWritesEnabled = true;

@@ -1,22 +1,22 @@
 package com.vellum.casebook;
 
 final class NativeAudioPermissionPolicy {
+  private static final String TRUSTED_HOST = "appassets.androidplatform.net";
+
   private NativeAudioPermissionPolicy() {}
 
   static boolean canGrant(
       String scheme,
       String host,
       int port,
-      int expectedPort,
       String[] resources,
       boolean microphonePermissionGranted,
       boolean captureArmed,
       long armExpiresAt,
       long now) {
-    if (!"http".equalsIgnoreCase(scheme)
-        || !"127.0.0.1".equals(host)
-        || expectedPort <= 0
-        || port != expectedPort
+    if (!"https".equalsIgnoreCase(scheme)
+        || !TRUSTED_HOST.equals(host)
+        || (port != -1 && port != 443)
         || !microphonePermissionGranted
         || !captureArmed
         || now > armExpiresAt
