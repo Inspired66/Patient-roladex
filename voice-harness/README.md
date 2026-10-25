@@ -7,7 +7,9 @@ All sample audio must be recorded with **invented patients only** and stays in `
 | File | Purpose |
 |---|---|
 | `vocab_check.py` | No-audio check: which terms from your list are missing from the model vocabulary |
-| `Transcribe.java` | Runs Vosk on `samples/*.wav`, writes `out/*.hyp.txt` and `out/timing.csv` |
+| `Engine.java`, `VoskEngine.java`, `Harness.java` | Engine interface, Vosk adapter, runner: `out/ENGINE/NAME.hyp.txt` and `timing.csv`. Register new engines in `Harness.create()` |
+| `compare.py` | Scores all `out/*` engines on the same clips into one table |
+| `grammar_probe.c` | No-audio probe: `grammar_probe LIBVOSK.so MODEL_DIR GRAMMAR.json WORD...` |
 | `score.py` | WER plus laterality, number, date and term accuracy |
 | `run.sh` | Compile, transcribe, score |
 | `test_harness.py` | Unit tests for the scorer and vocabulary reader (`python3 test_harness.py`) |

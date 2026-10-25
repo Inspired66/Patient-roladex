@@ -60,6 +60,12 @@ HARNESS_ARTIFACTS = {
             "md5": "6f64bfd8331d464cba55e2876bffd687",
         },
     ),
+    "vosk-model-en-us-0.22-lgraph.zip": (
+        "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22-lgraph.zip",
+        130557655,
+        "d9838b4aaa82a75c4a17f5aca300eaca129aaab2a7cbf951bafbb500eb9c4334",
+        {"md5": "2df36985f8ed8eb7b78476cadcdab48f"},
+    ),
 }
 
 

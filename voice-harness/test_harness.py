@@ -60,5 +60,25 @@ class ScoreTests(unittest.TestCase):
         self.assertEqual(r["terms"]["drug"], {"correct": 0, "total": 1, "accuracy": 0.0})
 
 
+class CompareTests(unittest.TestCase):
+    def test_two_engines_one_table(self):
+        import os
+        import tempfile
+        import compare
+        with tempfile.TemporaryDirectory() as d:
+            samples, out = os.path.join(d, "s"), os.path.join(d, "o")
+            for e, hyp in (("a", "give twelve milligrams left"), ("b", "give twenty milligrams right")):
+                os.makedirs(os.path.join(out, e))
+                open(os.path.join(out, e, "c1.hyp.txt"), "w").write(hyp)
+            os.makedirs(samples)
+            open(os.path.join(samples, "c1.ref.txt"), "w").write("give twelve milligrams left")
+            results = compare.evaluate(samples, out)
+            self.assertEqual(list(results), ["a", "b"])
+            self.assertEqual(results["a"]["wer"], 0)
+            self.assertGreater(results["b"]["wer"], 0)
+            text = compare.table(results)
+            self.assertEqual(len(text.splitlines()), 4)
+
+
 if __name__ == "__main__":
     unittest.main()

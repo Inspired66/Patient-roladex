@@ -207,6 +207,22 @@ Threading: `AudioRecord` read loop and Vosk run on one dedicated worker thread; 
 ### Native change list (anticipated)
 `AndroidManifest.xml` (no new permissions; optionally `uses-feature` unchanged), `build-apk.sh`, `prepare_vosk.py`, `third_party/vosk/`, `MainActivity.java` (new actions, arbiter hooks, lifecycle), new `SttEngine`/`SttSession`/`MicrophoneArbiter`/`SttModelStore`/`SttMessageValidator` classes, extended `NativeAudioPermissionPolicy`, `test-security-hardening.sh/.py`, new Java tests.
 
+### Review-screen safety options (added after the Phase 1 vocabulary result)
+
+Phase 1 evidence: the small model cannot output many drug names and can replace them with *different real drugs* (for example dexmedetomidine to dexamethasone). A transcript that reads fluently can therefore be clinically wrong, so the review screen has to do more than show editable text. Two designs, which can be combined:
+
+**Option A: Highlight-and-confirm review.** The review screen marks every drug name, dose/number, date and laterality word. Nothing is saved until each highlighted item is explicitly ticked as checked ("Save" stays disabled while unchecked items remain).
+- *How it works:* a deterministic detector in the web layer. Drugs come from a clinician-editable glossary (seeded from the term list), numbers and dates from a spoken-number/date parser ("twelve milligrams", "third of march"), laterality from left/right/bilateral. Each item is a chip: tap to confirm, edit, or delete. Sound-alike pairs (the confusion table in `voice-harness/reports/vocab-report.md`) get an extra warning chip.
+- *Limit:* it can only highlight what it recognises. A drug the model swapped for a non-drug word ("atrium" for atracurium) or for a different drug that is in the glossary looks plausible. Mitigation: also flag any word that is not in the engine vocabulary or the glossary, and list "drug-like words missing from the glossary". It reduces risk, it does not remove it.
+- *Effort:* **M** (detector and number/date parser with tests, chip UI in the review sheet, confirm-all gating, accessibility). No native work.
+- *Trade-offs:* keeps the free-text dictation workflow and is quick for the user, but adds friction on every transcript and relies on user attention. Confirmation fatigue is a real risk if too many chips appear.
+
+**Option B: Structured entry for drugs and doses; voice only for narrative.** Drugs, doses, routes, laterality and dates are entered from an in-app list or pickers (searchable glossary, dose field, side selector). Voice dictation fills only the free-text narrative (findings, plan, history). The dictated text still goes through the review screen, with any drug-like or numeric words it contains highlighted as in Option A.
+- *Effort:* **L**: a drug/dose data model and schema change (structured medication entries on the record), glossary management, picker UI in the note/consult/procedure editors, archive/CSV/migration handling, tests. It overlaps with the existing record fields and needs a decision about how structured entries relate to the free-text notes.
+- *Trade-offs:* removes the highest-risk content (drug names and doses) from speech recognition entirely, and the structured data is searchable and exportable. Costs the most work, changes the editing workflow, and clinicians may still say drug names aloud in the narrative.
+
+**Recommendation:** ship Option A first (it is the smaller change and is needed anyway for narrative text), and treat Option B as a follow-on if the audio gate result stays poor for drugs. Under either option the transcript stays labelled machine-generated and unverified, nothing is saved before confirmation, and the Phase 4 summariser must preserve highlighted items (drugs, doses, laterality) verbatim.
+
 ---
 
 ## 7. Risks, effort and test plan
