@@ -1,0 +1,477 @@
+drug: propofol
+drug: thiopentone
+drug: thiopental
+drug: etomidate
+drug: ketamine
+drug: midazolam
+drug: dexmedetomidine
+drug: sevoflurane
+drug: desflurane
+drug: isoflurane
+drug: nitrous oxide
+drug: remifentanil
+drug: fentanyl
+drug: alfentanil
+drug: sufentanil
+drug: morphine
+drug: hydromorphone
+drug: oxycodone
+drug: tramadol
+drug: methadone
+drug: tapentadol
+drug: paracetamol
+drug: acetaminophen
+drug: parecoxib
+drug: ketorolac
+drug: diclofenac
+drug: ibuprofen
+drug: clonidine
+drug: magnesium sulphate
+drug: magnesium sulfate
+drug: dexamethasone
+drug: ondansetron
+drug: granisetron
+drug: droperidol
+drug: cyclizine
+drug: metoclopramide
+drug: prochlorperazine
+drug: aprepitant
+drug: rocuronium
+drug: vecuronium
+drug: atracurium
+drug: cisatracurium
+drug: suxamethonium
+drug: succinylcholine
+drug: sugammadex
+drug: neostigmine
+drug: glycopyrrolate
+drug: atropine
+drug: phenylephrine
+drug: metaraminol
+drug: ephedrine
+drug: noradrenaline
+drug: norepinephrine
+drug: adrenaline
+drug: epinephrine
+drug: vasopressin
+drug: dobutamine
+drug: glyceryl trinitrate
+drug: esmolol
+drug: labetalol
+drug: metoprolol
+drug: amiodarone
+drug: adenosine
+drug: hydralazine
+drug: bupivacaine
+drug: levobupivacaine
+drug: ropivacaine
+drug: lignocaine
+drug: lidocaine
+drug: prilocaine
+drug: chloroprocaine
+drug: tranexamic acid
+drug: heparin
+drug: protamine
+drug: enoxaparin
+drug: dantrolene
+drug: naloxone
+drug: flumazenil
+drug: salbutamol
+drug: hydrocortisone
+drug: lipid emulsion
+drug: cefazolin
+drug: gentamicin
+drug: vancomycin
+drug: metronidazole
+fluid: Hartmann's solution
+fluid: Plasma-Lyte
+fluid: normal saline
+fluid: crystalloid
+fluid: gelofusine
+fluid: albumin
+fluid: packed red cells
+fluid: fresh frozen plasma
+fluid: cryoprecipitate
+fluid: platelets
+fluid: cell salvage
+equipment: laryngoscope
+equipment: videolaryngoscope
+equipment: McGrath
+equipment: bougie
+equipment: endotracheal tube
+equipment: laryngeal mask
+equipment: supraglottic airway
+equipment: nasopharyngeal airway
+equipment: oropharyngeal airway
+equipment: fibreoptic bronchoscope
+equipment: fiberoptic bronchoscope
+equipment: double lumen tube
+equipment: bronchial blocker
+equipment: capnography
+equipment: pulse oximetry
+equipment: arterial line
+equipment: central venous catheter
+equipment: cannula
+equipment: nerve stimulator
+equipment: train of four
+equipment: BIS monitor
+equipment: cuff pressure
+equipment: ventilator
+equipment: circle system
+equipment: Macintosh blade
+technique: rapid sequence induction
+technique: total intravenous anaesthesia
+technique: total intravenous anesthesia
+technique: target controlled infusion
+technique: spinal anaesthetic
+technique: spinal anesthetic
+technique: epidural
+technique: combined spinal epidural
+technique: caudal block
+technique: regional anaesthesia
+technique: regional anesthesia
+technique: peripheral nerve block
+technique: interscalene block
+technique: supraclavicular block
+technique: axillary block
+technique: femoral nerve block
+technique: adductor canal block
+technique: sciatic block
+technique: popliteal block
+technique: transversus abdominis plane block
+technique: erector spinae plane block
+technique: paravertebral block
+technique: rectus sheath block
+technique: ilioinguinal block
+technique: pudendal block
+technique: local infiltration
+technique: sedation
+technique: monitored anaesthesia care
+technique: awake fibreoptic intubation
+technique: one lung ventilation
+technique: controlled ventilation
+technique: spontaneous ventilation
+technique: extubation
+technique: emergence
+technique: gas induction
+technique: inhalational induction
+anatomy: epidural space
+anatomy: subarachnoid space
+anatomy: intrathecal
+anatomy: ligamentum flavum
+anatomy: dura
+anatomy: brachial plexus
+anatomy: cricoid pressure
+anatomy: cricothyroid membrane
+anatomy: glottis
+anatomy: vocal cords
+anatomy: larynx
+anatomy: trachea
+anatomy: carina
+anatomy: bronchus
+anatomy: diaphragm
+anatomy: phrenic nerve
+anatomy: femoral nerve
+anatomy: lateral femoral cutaneous nerve
+anatomy: sciatic nerve
+anatomy: popliteal fossa
+anatomy: sacral hiatus
+anatomy: internal jugular vein
+anatomy: radial artery
+complication: laryngospasm
+complication: bronchospasm
+complication: aspiration
+complication: difficult airway
+complication: failed intubation
+complication: oesophageal intubation
+complication: esophageal intubation
+complication: hypotension
+complication: bradycardia
+complication: tachycardia
+complication: arrhythmia
+complication: hypoxia
+complication: hypercapnia
+complication: malignant hyperthermia
+complication: anaphylaxis
+complication: local anaesthetic systemic toxicity
+complication: local anesthetic systemic toxicity
+complication: post dural puncture headache
+complication: high spinal
+complication: total spinal
+complication: nerve injury
+complication: post operative nausea and vomiting
+complication: delirium
+complication: awareness
+complication: hypothermia
+complication: hypovolaemia
+complication: hypovolemia
+complication: fluid overload
+complication: transfusion reaction
+complication: pneumothorax
+complication: myocardial infarction
+complication: acute kidney injury
+complication: pulmonary oedema
+complication: pulmonary edema
+complication: difficult mask ventilation
+complication: residual neuromuscular blockade
+complication: shivering
+complication: pruritus
+complication: urinary retention
+assessment: ASA grade
+assessment: Mallampati
+assessment: Cormack Lehane grade
+assessment: thyromental distance
+assessment: mouth opening
+assessment: neck extension
+assessment: body mass index
+assessment: obstructive sleep apnoea
+assessment: obstructive sleep apnea
+assessment: gastro oesophageal reflux
+assessment: gastroesophageal reflux
+assessment: nil by mouth
+assessment: fasting
+assessment: premedication
+assessment: pre operative assessment
+assessment: airway assessment
+assessment: functional capacity
+assessment: metabolic equivalents
+assessment: anticoagulant
+assessment: beta blocker
+assessment: difficult airway alert
+assessment: ejection fraction
+assessment: atrial fibrillation
+assessment: hypertension
+assessment: diabetes
+assessment: asthma
+assessment: chronic obstructive pulmonary disease
+assessment: ischaemic heart disease
+assessment: ischemic heart disease
+assessment: renal impairment
+assessment: no known drug allergies
+phrase: induction uneventful
+phrase: intubated first attempt
+phrase: grade one view
+phrase: maintained with sevoflurane
+phrase: reversed with sugammadex
+phrase: extubated awake
+phrase: transferred to recovery
+phrase: post operative analgesia
+phrase: multimodal analgesia
+phrase: patient controlled analgesia
+phrase: no anaesthetic complications
+phrase: no anesthetic complications
+phrase: estimated blood loss
+phrase: total fluids
+phrase: general anaesthetic
+phrase: general anesthetic
+phrase: left arm block
+phrase: right interscalene block
+phrase: left femoral nerve block
+phrase: bilateral
+phrase: oxygen saturation
+unit: micrograms per kilogram
+unit: milligrams per kilogram
+unit: millilitres
+unit: milliliters
+unit: millimetres of mercury
+unit: millimeters of mercury
+unit: litres per minute
+unit: liters per minute
+unit: beats per minute
+unit: per cent
+abbrev: r s i
+abbrev: e c g
+abbrev: n i b p
+abbrev: f i o two
+abbrev: e t c o two
+abbrev: p o n v
+abbrev: t i v a
+abbrev: b i s
+abbrev: peep
+drug: clindamycin
+drug: flucloxacillin
+drug: amoxicillin
+drug: piperacillin
+drug: tazobactam
+drug: ceftriaxone
+drug: warfarin
+drug: apixaban
+drug: rivaroxaban
+drug: celecoxib
+drug: prednisolone
+drug: gabapentin
+drug: pregabalin
+drug: chlorhexidine
+drug: povidone iodine
+drug: metformin
+drug: aspirin
+drug: clopidogrel
+procedure: cholecystectomy
+procedure: appendicectomy
+procedure: appendectomy
+procedure: laparoscopic cholecystectomy
+procedure: inguinal hernia repair
+procedure: herniorrhaphy
+procedure: laparotomy
+procedure: laparoscopy
+procedure: colectomy
+procedure: hemicolectomy
+procedure: anterior resection
+procedure: Hartmann's procedure
+procedure: gastrectomy
+procedure: oesophagectomy
+procedure: esophagectomy
+procedure: splenectomy
+procedure: Whipple procedure
+procedure: haemorrhoidectomy
+procedure: hemorrhoidectomy
+procedure: fistulotomy
+procedure: thyroidectomy
+procedure: parathyroidectomy
+procedure: mastectomy
+procedure: lumpectomy
+procedure: sentinel node biopsy
+procedure: excision biopsy
+procedure: wide local excision
+procedure: debridement
+procedure: fasciotomy
+procedure: skin graft
+procedure: free flap
+procedure: abdominoplasty
+procedure: blepharoplasty
+procedure: rhinoplasty
+procedure: septoplasty
+procedure: tonsillectomy
+procedure: arthroscopy
+procedure: arthroplasty
+procedure: total knee replacement
+procedure: total hip replacement
+procedure: meniscectomy
+procedure: rotator cuff repair
+procedure: carpal tunnel release
+procedure: open reduction internal fixation
+procedure: intramedullary nailing
+procedure: laminectomy
+procedure: discectomy
+procedure: spinal fusion
+procedure: craniotomy
+procedure: cystoscopy
+procedure: nephrectomy
+procedure: prostatectomy
+procedure: hysterectomy
+procedure: salpingectomy
+procedure: tendon repair
+procedure: amputation
+anatomy: gallbladder
+anatomy: cystic duct
+anatomy: common bile duct
+anatomy: peritoneum
+anatomy: omentum
+anatomy: mesentery
+anatomy: duodenum
+anatomy: jejunum
+anatomy: ileum
+anatomy: caecum
+anatomy: cecum
+anatomy: sigmoid colon
+anatomy: rectum
+anatomy: anal sphincter
+anatomy: inguinal canal
+anatomy: femoral canal
+anatomy: thyroid gland
+anatomy: recurrent laryngeal nerve
+anatomy: carotid artery
+anatomy: median nerve
+anatomy: ulnar nerve
+anatomy: radial nerve
+anatomy: femoral artery
+anatomy: saphenous vein
+anatomy: patella
+anatomy: tibia
+anatomy: fibula
+anatomy: femur
+anatomy: humerus
+anatomy: clavicle
+anatomy: scapula
+anatomy: acetabulum
+anatomy: meniscus
+anatomy: cruciate ligament
+anatomy: anterior cruciate ligament
+anatomy: Achilles tendon
+anatomy: rotator cuff
+anatomy: lumbar spine
+anatomy: cervical spine
+anatomy: sacrum
+anatomy: axilla
+anatomy: lymph node
+anatomy: fascia
+implant: Kirschner wire
+implant: locking plate
+implant: intramedullary nail
+implant: cannulated screw
+implant: prosthesis
+implant: mesh
+implant: suture
+implant: Vicryl
+implant: Prolene
+implant: Monocryl
+implant: staples
+instrument: diathermy
+instrument: retractor
+instrument: trocar
+instrument: laparoscope
+instrument: tourniquet
+instrument: scalpel
+instrument: forceps
+instrument: haemostat
+instrument: surgical drain
+condition: cholecystitis
+condition: cholelithiasis
+condition: appendicitis
+condition: diverticulitis
+condition: bowel obstruction
+condition: perforation
+condition: abscess
+condition: cellulitis
+condition: necrotising fasciitis
+condition: haematoma
+condition: hematoma
+condition: seroma
+condition: wound dehiscence
+condition: surgical site infection
+condition: anastomotic leak
+condition: pulmonary embolism
+condition: deep vein thrombosis
+condition: compartment syndrome
+condition: osteoarthritis
+condition: osteomyelitis
+condition: fracture
+condition: dislocation
+condition: melanoma
+condition: carcinoma
+condition: metastasis
+condition: ascites
+condition: jaundice
+condition: sepsis
+condition: ischaemia
+condition: ischemia
+condition: incarcerated hernia
+condition: strangulated hernia
+phrase: spinal anaesthetic
+phrase: nil by mouth
+phrase: pre operative
+phrase: post operative
+phrase: intra operative
+phrase: post operative day
+phrase: informed consent
+phrase: no known drug allergies
+phrase: no complications
+phrase: uneventful recovery
+phrase: discharged home
+phrase: return to theatre
+phrase: histology pending
+phrase: follow up in six weeks
+phrase: left side
+phrase: right side
+phrase: left lower limb
+phrase: right upper limb
