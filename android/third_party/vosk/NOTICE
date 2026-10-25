@@ -1,0 +1,21 @@
+Vosk Speech Recognition Toolkit (vosk-android 0.3.75, libvosk.so)
+Copyright Alpha Cephei Inc.
+Licensed under the Apache License, Version 2.0 (see LICENSE-2.0.txt).
+https://github.com/alphacep/vosk-api
+
+libvosk.so statically links Kaldi and OpenFst (Apache-2.0) and numeric libraries
+whose notices are published with the Vosk sources (to be itemised before release).
+
+Vosk acoustic and language model: vosk-model-small-en-us-0.15
+Copyright 2020 Alpha Cephei Inc.
+Licensed under the Apache License, Version 2.0.
+https://alphacephei.com/vosk/models
+
+Java Native Access (JNA 5.18.1, classes and libjnidispatch.so)
+Copyright (c) the JNA contributors.
+JNA is dual-licensed under LGPL-2.1-or-later and the Apache License, Version 2.0.
+Vellum elects to use and redistribute JNA under the Apache License, Version 2.0
+(see LICENSE-2.0.txt). https://github.com/java-native-access/jna
+
+The desktop vosk-0.3.45.jar used only by voice-harness/ is Apache-2.0 and is
+not shipped in the APK.
