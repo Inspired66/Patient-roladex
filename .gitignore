@@ -27,4 +27,5 @@ android/third_party/vosk/jni/
 voice-harness/samples/
 voice-harness/out/
 voice-harness/lib/
+voice-harness/whisper/
 voice-harness/classes/

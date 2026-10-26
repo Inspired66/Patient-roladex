@@ -80,5 +80,65 @@ class CompareTests(unittest.TestCase):
             self.assertEqual(len(text.splitlines()), 4)
 
 
+class GateTests(unittest.TestCase):
+    DRUGS = {("ropivacaine",), ("bupivacaine",), ("levobupivacaine",), ("lidocaine",), ("lignocaine",),
+             ("glyceryl", "trinitrate")}
+
+    def classify(self, ref, hyp):
+        import gate
+        import score
+        return [r[1:] for r in gate.classify_drugs("c", score.normalise(ref), score.normalise(hyp), self.DRUGS)]
+
+    def test_exact_and_different_real_drug(self):
+        self.assertEqual(self.classify("give ropivacaine", "give ropivacaine"), [("exact", "ropivacaine", "ropivacaine")])
+        self.assertEqual(self.classify("give ropivacaine", "give bupivacaine"), [("other_drug", "ropivacaine", "bupivacaine")])
+
+    def test_prefix_drug_is_a_different_drug(self):
+        self.assertEqual(self.classify("give bupivacaine", "give levobupivacaine"),
+                         [("other_drug", "bupivacaine", "levobupivacaine")])
+
+    def test_synonym_and_garbled(self):
+        self.assertEqual(self.classify("give lignocaine", "give lidocaine")[0][0], "variant")
+        self.assertEqual(self.classify("give ropivacaine", "give rope of a cane"),
+                         [("garbled", "ropivacaine", "rope of a cane")])
+        self.assertEqual(self.classify("give ropivacaine now", "give now"), [("garbled", "ropivacaine", "(nothing)")])
+
+    def test_multiword_drug(self):
+        self.assertEqual(self.classify("glyceryl trinitrate spray", "glyceryl trinitrate spray")[0][0], "exact")
+
+    def test_verdict_uses_clean_clips_only(self):
+        import gate
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            samples, out = os.path.join(d, "s"), os.path.join(d, "o", "e")
+            os.makedirs(samples)
+            os.makedirs(out)
+            terms = os.path.join(d, "t.txt")
+            open(terms, "w").write("drug: ropivacaine\ndrug: bupivacaine\n")
+            for name, ref, hyp in (("clean1", "ropivacaine left", "ropivacaine left"),
+                                   ("noisy1", "ropivacaine left", "bupivacaine right")):
+                open(os.path.join(samples, name + ".ref.txt"), "w").write(ref)
+                open(os.path.join(out, name + ".hyp.txt"), "w").write(hyp)
+            text = gate.run(samples, os.path.dirname(out), terms)
+            self.assertNotIn("NO-GO", text.split("Noisy clips")[0])
+            self.assertIn("1/1 (wrong/total)", text.split("Noisy clips")[1])
+
+    def test_status_thresholds(self):
+        import gate
+        self.assertEqual(gate.status(0.03, False, 0.02, 0.05), "CONDITIONAL")
+        self.assertEqual(gate.status(0.06, False, 0.02, 0.05), "FAIL")
+        self.assertEqual(gate.status(0.90, True, 0.90, 0.75), "PASS")
+        self.assertEqual(gate.status(0.74, True, 0.90, 0.75), "FAIL")
+
+
+class PromptTests(unittest.TestCase):
+    def test_priority_budget_and_no_prefixes(self):
+        import build_prompt
+        terms = [("anatomy", ["femur"]), ("drug", ["propofol"]), ("drug", ["propofol"]), ("drug", ["cefazolin"])]
+        self.assertEqual(build_prompt.build(terms, 600, "P:"), "P: propofol, cefazolin, femur.")
+        self.assertEqual(build_prompt.build(terms, 22, "P:"), "P: propofol.")
+
+
 if __name__ == "__main__":
     unittest.main()

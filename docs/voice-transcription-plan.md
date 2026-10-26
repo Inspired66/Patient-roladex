@@ -207,6 +207,14 @@ Threading: `AudioRecord` read loop and Vosk run on one dedicated worker thread; 
 ### Native change list (anticipated)
 `AndroidManifest.xml` (no new permissions; optionally `uses-feature` unchanged), `build-apk.sh`, `prepare_vosk.py`, `third_party/vosk/`, `MainActivity.java` (new actions, arbiter hooks, lifecycle), new `SttEngine`/`SttSession`/`MicrophoneArbiter`/`SttModelStore`/`SttMessageValidator` classes, extended `NativeAudioPermissionPolicy`, `test-security-hardening.sh/.py`, new Java tests.
 
+**Decision: Option A is the baseline design.** Drug names, doses/numbers, dates and laterality words are highlighted on the review screen and each must be explicitly confirmed before the transcript can be saved. Option B stays a possible follow-on only if the audio gate shows drug accuracy is still poor.
+
+**Added to the baseline: "did you mean" suggestions.** Each recognised word that is not an exact entry in the app's own drug list is fuzzy-matched against that list (the clinician-editable glossary the highlight detector already uses). If a close match exists, the chip shows "Did you mean <drug>?" with an accept button.
+- It only suggests. It never changes the transcript text automatically, and accepting is an explicit tap that edits the draft the user is reviewing (still nothing is saved to the case before confirmation).
+- Matching is deterministic and local: normalised edit distance on lower-cased words, plus a phonetic key (for example Double Metaphone) so sound-alikes such as "rope of a cane" or "atrium" surface "ropivacaine" and "atracurium". Candidates are ranked and capped (at most three shown); there is a minimum similarity threshold to avoid noisy suggestions, and tests assert that no input changes the text without a tap.
+- If the heard word is itself a different real drug on the list, it is **not** flagged as a typo (it is a valid drug), so a swap of one real drug for another (ropivacaine for bupivacaine) is only caught by the confirm-each-drug chip, not by fuzzy matching. The sound-alike pairs from the vocabulary report are shown as an extra warning on both drugs.
+- Effort: **S to M** on top of Option A (the matcher is a pure function with a test table; the UI is one more affordance on the chip). It uses the app's own drug list as data, so no new network access and no new dependency.
+
 ### Review-screen safety options (added after the Phase 1 vocabulary result)
 
 Phase 1 evidence: the small model cannot output many drug names and can replace them with *different real drugs* (for example dexmedetomidine to dexamethasone). A transcript that reads fluently can therefore be clinically wrong, so the review screen has to do more than show editable text. Two designs, which can be combined:

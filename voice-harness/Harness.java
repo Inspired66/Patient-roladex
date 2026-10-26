@@ -23,7 +23,11 @@ public final class Harness {
     static Engine create(String id) {
         switch (id) {
             case "vosk-small":
+            case "vosk-lgraph":
                 return new VoskEngine(id);
+            case "whisper-base-en":
+            case "whisper-small-en":
+                return new WhisperEngine(id);
             default:
                 throw new IllegalArgumentException("Unknown engine: " + id);
         }
@@ -45,7 +49,8 @@ public final class Harness {
             System.exit(1);
         }
         Arrays.sort(wavs);
-        Path out = Path.of(args[3], args[0]);
+        // label=NAME writes to OUT/NAME so variants (for example with and without a prompt) stay apart.
+        Path out = Path.of(args[3], options.getOrDefault("label", args[0]));
         Files.createDirectories(out);
         StringBuilder timing = new StringBuilder("name,audio_s,decode_s,rtf\n");
         try (Engine engine = create(args[0])) {

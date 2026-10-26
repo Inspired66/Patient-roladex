@@ -60,6 +60,15 @@ HARNESS_ARTIFACTS = {
             "md5": "6f64bfd8331d464cba55e2876bffd687",
         },
     ),
+    "jna-5.18.1.jar": (
+        f"{MAVEN}/net/java/dev/jna/jna/5.18.1/jna-5.18.1.jar",
+        2002994,
+        "260c4b1e22b1db9e110ee441c4f13ce115f841fa48c41d78750986214b395557",
+        {
+            "sha1": "b27ba04287cc4abe769642fe8318d39fc89bf937",
+            "md5": "cb531ec131e1c68c045b5d45fe5b9878",
+        },
+    ),
     "vosk-model-en-us-0.22-lgraph.zip": (
         "https://alphacephei.com/vosk/models/vosk-model-en-us-0.22-lgraph.zip",
         130557655,
