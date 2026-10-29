@@ -31,7 +31,24 @@ const COLUMNS = [
 ] as const;
 
 const MAGIC = "VELLUM1";
+const DATA_MAGIC = "VELLUMD1";
+const DATA_FORMAT_VERSION = 1;
+const MAX_INDEX_ENTRIES = 20_000;
+const MAX_INDEXED_FILE_BYTES = 31 * 1024 * 1024;
+const GCM_TAG_BYTES = 16;
 const PBKDF2_ITERS = 120_000;
+
+export type AttachmentIndexEntry = {
+  id: string;
+  patientId: string;
+  ownerKind: "procedure" | "consult";
+  ownerId: string;
+  name: string;
+  mime: string;
+  size: number;
+  sha256: string;
+  addedAt: string;
+};
 
 export type PackedFile = { name: string; mime: string; size: number; data: string };
 
@@ -179,7 +196,11 @@ export async function patientsToCsv(
   patients: Patient[],
   contacts: Contact[] = [],
   fileStore = defaultFileStore,
+  options: { includeFiles?: boolean } = {},
 ) {
+  const includeFiles = options.includeFiles ?? true;
+  const filesCell = (files: Attachment[]) =>
+    includeFiles ? packFiles(files, fileStore) : Promise.resolve("");
   const lines = [COLUMNS.join(",")];
   for (const patient of patients) {
     const last = surname(patient.name);
@@ -206,7 +227,7 @@ export async function patientsToCsv(
         surgery.surgeon,
         surgery.hospital,
         surgery.notes,
-        await packFiles(surgery.attachments, fileStore),
+        await filesCell(surgery.attachments),
       ]);
     }
     for (const consult of patient.consults) {
@@ -217,7 +238,7 @@ export async function patientsToCsv(
         consult.doctor,
         consult.medicalCentre,
         consult.notes,
-        await packFiles(consult.attachments, fileStore),
+        await filesCell(consult.attachments),
       ]);
     }
   }
@@ -481,6 +502,91 @@ async function deriveKey(password: string, salt: Uint8Array) {
   );
 }
 
+async function sha256Hex(bytes: ArrayBuffer) {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export async function buildAttachmentIndex(
+  patients: Patient[],
+  fileStore = defaultFileStore,
+): Promise<AttachmentIndexEntry[]> {
+  const index: AttachmentIndexEntry[] = [];
+  const add = async (
+    patientId: string,
+    ownerKind: AttachmentIndexEntry["ownerKind"],
+    owner: { id: string; date: string; attachments: Attachment[] },
+  ) => {
+    for (const file of owner.attachments) {
+      const blob = await fileStore.getBlob(file.id);
+      if (!blob) throw new Error(`Attachment "${file.name}" is missing from local storage.`);
+      if (blob.size <= 0 || blob.size !== file.size) {
+        throw new Error(`Attachment "${file.name}" does not match its stored size.`);
+      }
+      const added = (file as Attachment & { addedAt?: string }).addedAt;
+      index.push({
+        id: file.id,
+        patientId,
+        ownerKind,
+        ownerId: owner.id,
+        name: file.name,
+        mime: file.mime,
+        size: file.size,
+        sha256: await sha256Hex(await blob.arrayBuffer()),
+        addedAt: added || owner.date,
+      });
+    }
+  };
+  for (const patient of patients) {
+    for (const surgery of patient.surgeries) await add(patient.id, "procedure", surgery);
+    for (const consult of patient.consults) await add(patient.id, "consult", consult);
+  }
+  return index;
+}
+
+function parseAttachmentIndex(value: unknown): AttachmentIndexEntry[] {
+  const bad = () => new Error("The backup's attachment index is invalid.");
+  if (!Array.isArray(value) || value.length > MAX_INDEX_ENTRIES) throw bad();
+  const seen = new Set<string>();
+  return value.map((item) => {
+    if (!item || typeof item !== "object") throw bad();
+    const e = item as Partial<AttachmentIndexEntry>;
+    const text = (v: unknown, max: number): v is string =>
+      typeof v === "string" && v.length > 0 && v.length <= max;
+    if (
+      !text(e.id, 96) ||
+      !text(e.patientId, 96) ||
+      (e.ownerKind !== "procedure" && e.ownerKind !== "consult") ||
+      !text(e.ownerId, 96) ||
+      !text(e.name, 255) ||
+      !text(e.mime, 127) ||
+      typeof e.size !== "number" ||
+      !Number.isInteger(e.size) ||
+      e.size <= 0 ||
+      e.size > MAX_INDEXED_FILE_BYTES ||
+      typeof e.sha256 !== "string" ||
+      !/^[0-9a-f]{64}$/.test(e.sha256) ||
+      typeof e.addedAt !== "string" ||
+      e.addedAt.length > 40 ||
+      seen.has(e.id)
+    ) {
+      throw bad();
+    }
+    seen.add(e.id);
+    return {
+      id: e.id,
+      patientId: e.patientId,
+      ownerKind: e.ownerKind,
+      ownerId: e.ownerId,
+      name: e.name,
+      mime: e.mime,
+      size: e.size,
+      sha256: e.sha256,
+      addedAt: e.addedAt,
+    };
+  });
+}
+
 export function isEncryptedArchive(buffer: ArrayBuffer) {
   const bytes = new Uint8Array(buffer);
   const magic = new TextEncoder().encode(MAGIC);
@@ -521,6 +627,91 @@ export async function decryptArchive(buffer: ArrayBuffer, password: string) {
   } catch {
     throw new Error("That password did not open the file.");
   }
+}
+
+export function isDataArchive(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer);
+  const magic = new TextEncoder().encode(DATA_MAGIC);
+  if (bytes.length < magic.length) return false;
+  return magic.every((value, index) => bytes[index] === value);
+}
+
+// Data-only backup: all records, no attachment bytes, plus an attachment index.
+// The magic is authenticated as AES-GCM additional data; names stay inside the ciphertext.
+export async function encryptDataArchive(
+  patients: Patient[],
+  contacts: Contact[],
+  password: string,
+  fileStore = defaultFileStore,
+) {
+  const payload = JSON.stringify({
+    format: "vellum-data",
+    version: DATA_FORMAT_VERSION,
+    csv: await patientsToCsv(patients, contacts, fileStore, { includeFiles: false }),
+    attachments: await buildAttachmentIndex(patients, fileStore),
+  });
+  const magic = new TextEncoder().encode(DATA_MAGIC);
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveKey(password, salt);
+  const cipher = new Uint8Array(
+    await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: toArrayBuffer(iv), additionalData: toArrayBuffer(magic) },
+      key,
+      new TextEncoder().encode(payload),
+    ),
+  );
+  return new Blob([concatBytes([magic, salt, iv, cipher])], { type: "application/octet-stream" });
+}
+
+export async function decryptDataArchive(
+  buffer: ArrayBuffer,
+  password: string,
+): Promise<{ csv: string; attachments: AttachmentIndexEntry[] }> {
+  if (!isDataArchive(buffer)) throw new Error("This file is not a Vellum data backup.");
+  const bytes = new Uint8Array(buffer);
+  const head = DATA_MAGIC.length;
+  if (bytes.length < head + 16 + 12 + GCM_TAG_BYTES) {
+    throw new Error("This backup file is incomplete. It may have been cut short when it was copied.");
+  }
+  let plain: string;
+  try {
+    const key = await deriveKey(password, bytes.slice(head, head + 16));
+    plain = new TextDecoder().decode(
+      await crypto.subtle.decrypt(
+        {
+          name: "AES-GCM",
+          iv: toArrayBuffer(bytes.slice(head + 16, head + 28)),
+          additionalData: toArrayBuffer(bytes.slice(0, head)),
+        },
+        key,
+        toArrayBuffer(bytes.slice(head + 28)),
+      ),
+    );
+  } catch {
+    throw new Error("That password did not open the file, or the file is damaged or incomplete.");
+  }
+  let parsed: { format?: unknown; version?: unknown; csv?: unknown; attachments?: unknown };
+  try {
+    parsed = JSON.parse(plain);
+  } catch {
+    throw new Error("The backup could not be read.");
+  }
+  if (!parsed || parsed.format !== "vellum-data" || typeof parsed.csv !== "string") {
+    throw new Error("The backup could not be read.");
+  }
+  if (typeof parsed.version !== "number" || parsed.version > DATA_FORMAT_VERSION) {
+    throw new Error("This backup was made by a newer version of Vellum.");
+  }
+  return { csv: parsed.csv, attachments: parseAttachmentIndex(parsed.attachments) };
+}
+
+// Opens either archive kind. Old VELLUM1 archives carry attachments inside the CSV and no index.
+export async function readEncryptedArchive(buffer: ArrayBuffer, password: string) {
+  if (isDataArchive(buffer)) {
+    return { kind: "data" as const, ...(await decryptDataArchive(buffer, password)) };
+  }
+  return { kind: "full" as const, csv: await decryptArchive(buffer, password), attachments: [] };
 }
 
 export function downloadBlob(blob: Blob, filename: string) {
