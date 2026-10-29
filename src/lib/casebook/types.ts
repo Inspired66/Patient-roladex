@@ -3,6 +3,9 @@ export type Attachment = {
   name: string;
   mime: string;
   size: number;
+  // Set when the record came from a data-only backup and the file bytes are not on this device.
+  // Carries the index fingerprint so later data backups can write the entry unchanged.
+  notRestored?: { sha256: string; addedAt: string };
 };
 
 export type Surgery = {

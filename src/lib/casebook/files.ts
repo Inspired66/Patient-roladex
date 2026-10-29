@@ -167,7 +167,43 @@ export function orphanedBlobIds(stored: string[], referenced: Set<string>) {
   return stored.filter((id) => !referenced.has(id));
 }
 
-export async function sweepOrphanBlobs(referenced: Set<string>) {
-  if (typeof indexedDB === "undefined") return;
-  for (const id of orphanedBlobIds(await listBlobIds(), referenced)) await deleteBlob(id);
+// A restore writes new blobs before the records that reference them are committed, so the sweep
+// must not run alongside it. `restoreEpoch` also catches a restore that starts while a sweep is
+// between listing blobs and deleting them.
+let restoresInProgress = 0;
+let restoreEpoch = 0;
+
+export async function withRestoreInProgress<T>(work: () => Promise<T>): Promise<T> {
+  restoresInProgress += 1;
+  restoreEpoch += 1;
+  try {
+    return await work();
+  } finally {
+    restoresInProgress -= 1;
+    restoreEpoch += 1;
+  }
+}
+
+type SweepStore = { list: () => Promise<string[]>; remove: (id: string) => Promise<void> };
+
+// `referenced` is read again right before deleting, so a commit that lands while the sweep is
+// listing blobs is respected. Returns the number of blobs deleted.
+export async function sweepOrphanBlobs(
+  referenced: Set<string> | (() => Set<string>),
+  store: SweepStore | undefined = undefined,
+) {
+  if (!store && typeof indexedDB === "undefined") return 0;
+  const ops = store ?? { list: listBlobIds, remove: deleteBlob };
+  if (restoresInProgress > 0) return 0;
+  const epoch = restoreEpoch;
+  const stored = await ops.list();
+  if (restoresInProgress > 0 || restoreEpoch !== epoch) return 0;
+  const current = typeof referenced === "function" ? referenced() : referenced;
+  let deleted = 0;
+  for (const id of orphanedBlobIds(stored, current)) {
+    if (restoresInProgress > 0 || restoreEpoch !== epoch) break;
+    await ops.remove(id);
+    deleted += 1;
+  }
+  return deleted;
 }

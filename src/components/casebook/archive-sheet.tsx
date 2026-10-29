@@ -2,12 +2,14 @@ import { useRef, useState } from "react";
 import { Confirm, Sheet } from "@/components/casebook/forms";
 import {
   csvToDrafts,
-  decryptArchive,
   encryptArchive,
+  isDataArchive,
   isEncryptedArchive,
   patientsToCsv,
+  readEncryptedArchive,
   restoreDrafts,
   saveBlob,
+  type AttachmentIndexEntry,
   type DraftPatient,
 } from "@/lib/casebook/archive";
 import { todayISO } from "@/lib/casebook/format";
@@ -34,9 +36,11 @@ export function ArchiveSheet({
   const [warnPlain, setWarnPlain] = useState(false);
   const [locked, setLocked] = useState<ArrayBuffer | null>(null);
   const [unlockPassword, setUnlockPassword] = useState("");
-  const [restore, setRestore] = useState<{ drafts: DraftPatient[]; contacts: Contact[] } | null>(
-    null,
-  );
+  const [restore, setRestore] = useState<{
+    drafts: DraftPatient[];
+    contacts: Contact[];
+    index: AttachmentIndexEntry[];
+  } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const chosen = scope === "list" ? listed : everyone;
@@ -97,12 +101,12 @@ export function ArchiveSheet({
     setRestore(null);
     try {
       const buffer = await file.arrayBuffer();
-      if (isEncryptedArchive(buffer)) {
+      if (isEncryptedArchive(buffer) || isDataArchive(buffer)) {
         setLocked(buffer);
         setUnlockPassword("");
         return;
       }
-      setRestore(csvToDrafts(new TextDecoder().decode(buffer)));
+      setRestore({ ...csvToDrafts(new TextDecoder().decode(buffer)), index: [] });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not read that file.");
     }
@@ -114,8 +118,8 @@ export function ArchiveSheet({
     setBusy(true);
     setError("");
     try {
-      const csv = await decryptArchive(locked, unlockPassword);
-      setRestore(csvToDrafts(csv));
+      const opened = await readEncryptedArchive(locked, unlockPassword);
+      setRestore({ ...csvToDrafts(opened.csv), index: opened.attachments });
       setLocked(null);
       setUnlockPassword("");
     } catch (reason) {
@@ -130,8 +134,11 @@ export function ArchiveSheet({
     setBusy(true);
     setError("");
     try {
-      await restoreDrafts(restore.drafts, (patients) =>
-        replaceCasebook(patients, restore.contacts),
+      await restoreDrafts(
+        restore.drafts,
+        (patients) => replaceCasebook(patients, restore.contacts),
+        undefined,
+        restore.index,
       );
       setRestore(null);
       onClose();
@@ -261,7 +268,7 @@ export function ArchiveSheet({
       {restore ? (
         <Confirm
           title="Replace the casebook?"
-          body={`This will replace the patients on this device with ${restore.drafts.length} ${restore.drafts.length === 1 ? "patient" : "patients"} from the file. Cards here now will be deleted.${restore.contacts.length ? ` The directory will be replaced with ${restore.contacts.length} contacts.` : ""}`}
+          body={`This will replace the patients on this device with ${restore.drafts.length} ${restore.drafts.length === 1 ? "patient" : "patients"} from the file. Cards here now will be deleted.${restore.index.length ? ` ${restore.index.length} attached ${restore.index.length === 1 ? "file is" : "files are"} listed but not included in this backup, and will show as Not restored.` : ""}${restore.contacts.length ? ` The directory will be replaced with ${restore.contacts.length} contacts.` : ""}`}
           confirmLabel={busy ? "Restoring…" : "Replace casebook"}
           onConfirm={() => void confirmRestore()}
           onCancel={() => setRestore(null)}

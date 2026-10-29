@@ -5,6 +5,7 @@ import {
   MAX_FILE_BYTES,
   MAX_FILES,
   putBlob,
+  withRestoreInProgress,
 } from "./files.ts";
 import { callNative, hasNativeMessageBridge } from "./native-bridge.ts";
 import { given, joinName, surname } from "./format.ts";
@@ -140,6 +141,11 @@ function base64ToBytes(data: string) {
 async function packFiles(files: Attachment[], fileStore: ArchiveFileStore): Promise<string> {
   const packed: PackedFile[] = [];
   for (const file of files) {
+    if (file.notRestored) {
+      throw new Error(
+        `Attachment "${file.name}" was not restored on this device, so a backup with files cannot be made. Use a data backup instead.`,
+      );
+    }
     const blob = await fileStore.getBlob(file.id);
     if (!blob) throw new Error(`Attachment "${file.name}" is missing from local storage.`);
     if (
@@ -451,21 +457,52 @@ export async function restoreDrafts(
   drafts: DraftPatient[],
   commit: (patients: Patient[]) => void,
   fileStore = defaultFileStore,
+  index: AttachmentIndexEntry[] = [],
 ) {
-  const { patients, written } = await materializeDraftsWithFiles(drafts, fileStore);
-  try {
-    commit(patients);
-  } catch (error) {
+  // Everything is built off to the side; `commit` is the single swap point. Any failure before it
+  // (or in it) removes what was written and leaves the existing casebook untouched.
+  await withRestoreInProgress(async () => {
+    const { patients, written } = await materializeDraftsWithFiles(drafts, fileStore);
     try {
-      await cleanupWrittenFiles(written, fileStore);
-    } catch (cleanupError) {
-      throw new AggregateError(
-        [error, cleanupError],
-        "Restore failed and temporary attachment cleanup was incomplete.",
-      );
+      applyAttachmentIndex(patients, index);
+      commit(patients);
+    } catch (error) {
+      try {
+        await cleanupWrittenFiles(written, fileStore);
+      } catch (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          "Restore failed and temporary attachment cleanup was incomplete.",
+        );
+      }
+      throw error;
     }
-    throw error;
+  });
+}
+
+// Attaches the index entries to the restored records as "Not restored" files. Any entry that does
+// not belong to a restored record means the backup is inconsistent, so the whole restore fails.
+export function applyAttachmentIndex(patients: Patient[], index: AttachmentIndexEntry[]) {
+  const bad = () => new Error("The backup's attachment list does not match its records.");
+  const owners = new Map<string, Attachment[]>();
+  for (const patient of patients) {
+    for (const surgery of patient.surgeries)
+      owners.set(`${patient.id}|procedure|${surgery.id}`, surgery.attachments);
+    for (const consult of patient.consults)
+      owners.set(`${patient.id}|consult|${consult.id}`, consult.attachments);
   }
+  for (const entry of index) {
+    const list = owners.get(`${entry.patientId}|${entry.ownerKind}|${entry.ownerId}`);
+    if (!list || list.length >= MAX_FILES) throw bad();
+    list.push({
+      id: entry.id,
+      name: entry.name,
+      mime: entry.mime,
+      size: entry.size,
+      notRestored: { sha256: entry.sha256, addedAt: entry.addedAt },
+    });
+  }
+  return patients;
 }
 
 function concatBytes(parts: Uint8Array[]) {
@@ -518,6 +555,21 @@ export async function buildAttachmentIndex(
     owner: { id: string; date: string; attachments: Attachment[] },
   ) => {
     for (const file of owner.attachments) {
+      if (file.notRestored) {
+        // Bytes were never restored here: carry the fingerprint from the earlier index unchanged.
+        index.push({
+          id: file.id,
+          patientId,
+          ownerKind,
+          ownerId: owner.id,
+          name: file.name,
+          mime: file.mime,
+          size: file.size,
+          sha256: file.notRestored.sha256,
+          addedAt: file.notRestored.addedAt,
+        });
+        continue;
+      }
       const blob = await fileStore.getBlob(file.id);
       if (!blob) throw new Error(`Attachment "${file.name}" is missing from local storage.`);
       if (blob.size <= 0 || blob.size !== file.size) {
@@ -672,7 +724,9 @@ export async function decryptDataArchive(
   const bytes = new Uint8Array(buffer);
   const head = DATA_MAGIC.length;
   if (bytes.length < head + 16 + 12 + GCM_TAG_BYTES) {
-    throw new Error("This backup file is incomplete. It may have been cut short when it was copied.");
+    throw new Error(
+      "This backup file is incomplete. It may have been cut short when it was copied.",
+    );
   }
   let plain: string;
   try {
@@ -733,8 +787,7 @@ export function hasNativeSave() {
 }
 
 export function requestPhoneMicrophone(userInitiated: boolean) {
-  if (!hasNativeMessageBridge())
-    return Promise.resolve("browser" as const);
+  if (!hasNativeMessageBridge()) return Promise.resolve("browser" as const);
   if (!userInitiated) return Promise.resolve("gesture_required" as const);
   return callNative<{ status: "granted" | "denied" | "settings" }>("beginMicrophoneCapture")
     .then((result) => result?.status ?? "denied")
@@ -749,8 +802,7 @@ export function endPhoneMicrophoneCapture() {
 }
 
 export function requestPhoneCamera() {
-  if (!hasNativeMessageBridge())
-    return Promise.resolve("browser" as const);
+  if (!hasNativeMessageBridge()) return Promise.resolve("browser" as const);
   return callNative<{ status: "granted" | "denied" | "settings" }>("requestCamera")
     .then((result) => result?.status ?? "denied")
     .catch(() => "denied" as const);

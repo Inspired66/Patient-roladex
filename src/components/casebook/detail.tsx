@@ -4,7 +4,7 @@ import { AttachControls } from "@/components/casebook/attach";
 import { AttachmentCount } from "@/components/casebook/attachment-count";
 import { Confirm } from "@/components/casebook/forms";
 import { acceptFiles, deleteBlob, fileLimitLabel, getBlob, MAX_FILES, MAX_RECORDING_SECONDS, putBlob } from "@/lib/casebook/files";
-import { ageLabel, displayName, formatBytes, formatDob, patientTimeline, todayISO } from "@/lib/casebook/format";
+import { ageLabel, attachmentDetail, displayName, formatBytes, formatDob, patientTimeline, todayISO } from "@/lib/casebook/format";
 import { useBackLayer } from "@/lib/casebook/back";
 import { useCasebook } from "@/lib/casebook/store";
 import type { Attachment, Consult, ContactKind, FlyOrigin, Patient, Surgery } from "@/lib/casebook/types";
@@ -726,11 +726,14 @@ function AttachmentRow({ file, onRemove }: { file: Attachment; onRemove: () => v
   const [url, setUrl] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const image = file.mime.startsWith("image/");
+  const [notice, setNotice] = useState("");
+  const missing = Boolean(file.notRestored);
   const audio = file.mime.startsWith("audio/") || /\.(webm|m4a|mp3|wav|ogg)$/i.test(file.name);
 
   useEffect(() => {
     let cancelled = false;
     let created = "";
+    if (missing) return;
     void getBlob(file.id)
       .then((blob) => {
         if (!blob || cancelled) return;
@@ -742,7 +745,40 @@ function AttachmentRow({ file, onRemove }: { file: Attachment; onRemove: () => v
       cancelled = true;
       if (created) URL.revokeObjectURL(created);
     };
-  }, [file.id]);
+  }, [file.id, missing]);
+
+  if (missing) {
+    return (
+      <div className="file-block">
+        <div className="file-row">
+          <button
+            type="button"
+            className="file-icon"
+            aria-label={`${file.name}, not restored`}
+            onClick={() =>
+              setNotice(
+                "This file was not included in the backup, so it is not on this phone. Restore a backup that includes files, or attach it again.",
+              )
+            }
+          >
+            <FileText />
+          </button>
+          <div className="file-name">
+            <p>{file.name}</p>
+            <span>{attachmentDetail(file)}</span>
+          </div>
+          <button type="button" className="btn-text danger" onClick={onRemove}>
+            Remove
+          </button>
+        </div>
+        {notice ? (
+          <p className="slip-who" role="status">
+            {notice}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
     <div className="file-block">

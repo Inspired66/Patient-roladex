@@ -16,7 +16,7 @@ import type {
 } from "./types";
 
 export const CASEBOOK_STORAGE_KEY = "vellum-casebook-v1";
-export const CASEBOOK_SCHEMA_VERSION = 2;
+export const CASEBOOK_SCHEMA_VERSION = 3;
 let storageWritesEnabled = true;
 
 type CasebookState = {
@@ -94,12 +94,22 @@ function normalizeFiles(value: unknown): Attachment[] {
     if (!item || typeof item !== "object") return [];
     const file = item as Attachment;
     if (typeof file.id !== "string") return [];
+    const missing = file.notRestored;
+    const notRestored =
+      missing &&
+      typeof missing === "object" &&
+      typeof missing.sha256 === "string" &&
+      /^[0-9a-f]{64}$/.test(missing.sha256) &&
+      typeof missing.addedAt === "string"
+        ? { sha256: missing.sha256, addedAt: missing.addedAt.slice(0, 40) }
+        : undefined;
     return [
       {
         id: file.id,
         name: typeof file.name === "string" ? file.name : "File",
         mime: typeof file.mime === "string" ? file.mime : "application/octet-stream",
         size: typeof file.size === "number" ? file.size : 0,
+        ...(notRestored ? { notRestored } : {}),
       },
     ];
   });
@@ -362,11 +372,22 @@ export const useCasebook = create<CasebookState>()(
             ...patient.consults.flatMap((consult) => consult.attachments.map((file) => file.id)),
           ]),
         );
-        set({
-          patients: nextPatients,
-          contacts: normalizeContacts(contacts),
-          storageError: null,
-        });
+        const previous = { patients: currentPatients, contacts: get().contacts };
+        try {
+          set({
+            patients: nextPatients,
+            contacts: normalizeContacts(contacts),
+            storageError: null,
+          });
+        } catch (error) {
+          // The new state could not be saved: put the old one back so nothing is half-swapped.
+          try {
+            set(previous);
+          } catch {
+            // Memory is restored even if storage still refuses writes.
+          }
+          throw error;
+        }
         for (const patient of currentPatients) {
           const attachments = [
             ...patient.surgeries.flatMap((surgery) => surgery.attachments),
@@ -427,7 +448,9 @@ export function bootstrapCasebook() {
       const { patients, contacts } = migrateStoredCasebook(raw);
       storageWritesEnabled = true;
       useCasebook.setState({ patients, contacts, hydrated: true, storageError: null });
-      void sweepOrphanBlobs(referencedFileIds(patients)).catch(() => undefined);
+      void sweepOrphanBlobs(() => referencedFileIds(useCasebook.getState().patients)).catch(
+        () => undefined,
+      );
       return;
     }
     storageWritesEnabled = true;

@@ -98,6 +98,11 @@ export function attachmentCountLabel(count: number) {
   return count === 1 ? "1 attachment" : `${count} attachments`;
 }
 
+export function attachmentDetail(file: { size: number; notRestored?: unknown }) {
+  const size = formatBytes(file.size);
+  return file.notRestored ? `Not restored · ${size}` : size;
+}
+
 export function formatBytes(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
