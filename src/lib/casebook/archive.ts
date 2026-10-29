@@ -547,8 +547,25 @@ async function sha256Hex(bytes: ArrayBuffer) {
 export async function buildAttachmentIndex(
   patients: Patient[],
   fileStore = defaultFileStore,
+  onProgress?: (done: number, total: number) => void,
 ): Promise<AttachmentIndexEntry[]> {
   const index: AttachmentIndexEntry[] = [];
+  const total = patients.reduce(
+    (sum, patient) =>
+      sum +
+      [...patient.surgeries, ...patient.consults].reduce(
+        (inner, owner) => inner + owner.attachments.length,
+        0,
+      ),
+    0,
+  );
+  let done = 0;
+  const tick = async () => {
+    done += 1;
+    onProgress?.(done, total);
+    // Let the browser paint between files so the screen stays responsive.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  };
   const add = async (
     patientId: string,
     ownerKind: AttachmentIndexEntry["ownerKind"],
@@ -568,6 +585,7 @@ export async function buildAttachmentIndex(
           sha256: file.notRestored.sha256,
           addedAt: file.notRestored.addedAt,
         });
+        await tick();
         continue;
       }
       const blob = await fileStore.getBlob(file.id);
@@ -587,6 +605,7 @@ export async function buildAttachmentIndex(
         sha256: await sha256Hex(await blob.arrayBuffer()),
         addedAt: added || owner.date,
       });
+      await tick();
     }
   };
   for (const patient of patients) {
@@ -695,12 +714,13 @@ export async function encryptDataArchive(
   contacts: Contact[],
   password: string,
   fileStore = defaultFileStore,
+  onProgress?: (done: number, total: number) => void,
 ) {
   const payload = JSON.stringify({
     format: "vellum-data",
     version: DATA_FORMAT_VERSION,
     csv: await patientsToCsv(patients, contacts, fileStore, { includeFiles: false }),
-    attachments: await buildAttachmentIndex(patients, fileStore),
+    attachments: await buildAttachmentIndex(patients, fileStore, onProgress),
   });
   const magic = new TextEncoder().encode(DATA_MAGIC);
   const salt = crypto.getRandomValues(new Uint8Array(16));

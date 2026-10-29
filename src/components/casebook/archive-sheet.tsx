@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { DataBackupSheet } from "@/components/casebook/data-backup-sheet";
 import { Confirm, Sheet } from "@/components/casebook/forms";
 import {
   csvToDrafts,
@@ -34,6 +35,7 @@ export function ArchiveSheet({
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState("");
   const [warnPlain, setWarnPlain] = useState(false);
+  const [dataBackup, setDataBackup] = useState(false);
   const [locked, setLocked] = useState<ArrayBuffer | null>(null);
   const [unlockPassword, setUnlockPassword] = useState("");
   const [restore, setRestore] = useState<{
@@ -150,9 +152,14 @@ export function ArchiveSheet({
     }
   }
 
+  if (dataBackup) return <DataBackupSheet onClose={onClose} />;
+
   return (
     <Sheet title="Archive" onClose={onClose}>
       <div className="stack">
+        <button type="button" className="btn-ink" onClick={() => setDataBackup(true)}>
+          Back up data
+        </button>
         <p className="slip-who">
           Choose where to save it on this phone. A CSV can be opened by anyone. An encrypted file
           opens only with the password, and that password cannot be recovered. The surgeon and
