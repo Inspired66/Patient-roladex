@@ -8,13 +8,16 @@ All sample audio must be recorded with **invented patients only** and stays in `
 |---|---|
 | `vocab_check.py` | No-audio check: which terms from your list are missing from the model vocabulary |
 | `Engine.java`, `VoskEngine.java`, `Harness.java` | Engine interface, Vosk adapter, runner: `out/ENGINE/NAME.hyp.txt` and `timing.csv`. Register new engines in `Harness.create()` |
-| `compare.py` | Scores all `out/*` engines on the same clips into one table |
+| `compare.py` | Scores all `out/*` engines on the same clips into one table, including spelling-only differences; `--clean-only` excludes `noisy*` clips |
 | `grammar_probe.c` | No-audio probe: `grammar_probe LIBVOSK.so MODEL_DIR GRAMMAR.json WORD...` |
 | `gate.py` | Approved gate: clean/noisy split, drug exact and different-real-drug rows, full error table |
 | `WhisperEngine.java`, `build_prompt.py`, `token_count.cpp`, `prepare_whisper.py` | whisper.cpp adapter, prompt builder and token counter, pinned fetch/build |
 | `phone-bench.sh`, `device-bench.sh`, `make_long_clip.py` | Phone latency, memory and copy-time measurements via adb |
-| `score.py` | WER plus laterality, number, date and term accuracy |
+| `score.py` | Case/punctuation-normalized WER, British/American spelling equivalence, plus laterality, number, date and term accuracy |
 | `run.sh` | Compile, transcribe, score |
+| `run_engines.py` | Sequential, resumable run of all six engine variants into `out/cmp` (per-engine `.done.json`, log, peak RSS); run under `nohup` |
+| `matcher_analysis.py`, `matcher_clip_analysis.py` | Text-only prototype of the suggest-only drug matcher scored on saved hypotheses (exploratory, not app code) |
+| `reference/` | The 14 reference scripts (`clipNN.ref.txt`, `noisyNN.ref.txt`): invented clinical text, no names or identifiers, no audio. Copy to `samples/` next to your own recordings |
 | `test_harness.py` | Unit tests for the scorer and vocabulary reader (`python3 test_harness.py`) |
 
 ## Term list
@@ -38,6 +41,10 @@ The small English model has no `graph/words.txt`. Its 152,217-word table is embe
 
 For each clip `NAME`: `samples/NAME.wav` (16 kHz, mono, 16-bit PCM) and `samples/NAME.ref.txt`
 containing exactly what was said, in spoken form (`twelve milligrams`, `third of march`).
+Scoring lowercases and removes punctuation. Known British/American spelling variants (including
+`anaesthetic`/`anesthetic` and `oesophageal`/`esophageal`) do not count as word errors; the
+comparison and gate reports list each such difference separately. Drug synonym spellings such as
+`lignocaine`/`lidocaine` remain visible in the gate's drug-variant breakdown and error table.
 
 ## Engines on desktop
 

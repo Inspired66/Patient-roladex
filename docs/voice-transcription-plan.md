@@ -1,8 +1,178 @@
 # Offline voice transcription and summarization: Phase 0 plan
 
-Status: **plan only, no code changed.** Branch: `offline-transcription` (cut from `repo-cleanup`, which is identical to `security-hardening`; `main` has no `android/` directory).
+Status: **plan only, no application code changed.** Branch: `offline-transcription` (cut from `repo-cleanup`, which is identical to `security-hardening`; `main` has no `android/` directory).
+
+> **Revision 2 (direction change).** The Phase 1 engine comparison found no on-device engine that passes the approved gate (Part A below). Engine and phone-benchmark work is **paused**. Part B (new, immediately below) evaluates a simpler design: use the phone's own dictation and build a review layer on top. **Sections 1 to 8 are the original Vosk-centred plan and are kept for reference; Part B section B5 says what happens to them.** Nothing in Part B is approved yet.
 
 Evidence labels used below: **[repo]** read in this repository, **[source]** taken from an upstream page fetched while writing this plan, **[estimate]** derived or reported secondhand and **must be measured in Phase 1/5**, **[blocked]** I tried to verify it but could not.
+
+---
+
+# Part A. Why the direction changed (Phase 1 result)
+
+Desktop comparison, 12 clean clips (1,644 reference words, invented patients), 2 noisy clips reported separately, approved gate. Raw reports: `voice-harness/reports/runs/` (git-ignored). **Every engine is NO-GO on the clean clips.**
+
+| Engine | WER | Laterality | Drug names exact | Different real drug | Peak RSS | Real-time factor |
+|---|---|---|---|---|---|---|
+| vosk-small (unprompted) | 36.3% | 91.5% | 16.2% (13/80) | 0.0% | 431 MiB | 0.09 |
+| vosk-lgraph (unprompted) | 28.8% | 94.9% | 31.2% (25/80) | 1.2% | 829 MiB | 0.49 |
+| whisper base.en | 37.9% | 94.9% | 35.0% (28/80) | 0.0% | 284 MiB | 0.29 |
+| whisper base.en + prompt | 32.9% | 98.3% | 36.2% (29/80) | 0.0% | 291 MiB | 0.31 |
+| whisper small.en | 29.4% | 96.6% | 52.5% (42/80) | 0.0% | 542 MiB | 0.90 |
+| whisper small.en + prompt | 36.3% | 86.4% | 51.2% (41/80) | 0.0% | 558 MiB | 0.97 |
+
+Gate rows 1 (WER ≤ 15%) and 5 (drug names exact ≥ 90%) fail for every engine, so no engine reaches GO. **Known scorer limit:** Whisper writes digits ("64", "12th of March 2026") while the references are spoken-form, so Whisper's number and date rows (about 10 to 28%) are artefacts of the scorer, not real results. Drug names are unaffected. Most drug errors are garbled text ("rock uranium" for rocuronium), not a different real drug.
+
+---
+
+# Part B. Revised Phase 0: phone dictation plus a review layer
+
+Status: **proposal, awaiting approval. No application code written; no engines or phone benchmarks run.** The only computation behind B4 is a text-only analysis of the saved hypotheses in `voice-harness/out/cmp/`; its throwaway scripts are in the session folder, not in the repository.
+
+**Evidence labels:** **[repo]** read in this repository; **[docs]** Android developer reference pages fetched on 2026-10-29 (`SpeechRecognizer`, `RecognizerIntent`, `RecognitionSupport`); **[measured]** from the analysis in B4; **[unverified]** I could not verify it here (no device, and I was told not to run anything new), and it must be checked on a real phone.
+
+## B1. Option K: keyboard dictation
+
+Text arrives through the Android keyboard's mic button into the existing `textarea` editors (`GeneralNotes`, `ConsultBlock`, `SurgeryBlock`, `ConsultForm`, `SurgeryForm`; section 1 map).
+
+**What is needed:** probably nothing native. WebView text fields already accept IME input, so no bridge action, no `RECORD_AUDIO` use by Vellum, no `NativeAudioPermissionPolicy` change, no model, no manifest change. The keyboard app holds its own microphone permission. **[unverified]** that every target keyboard's mic button works inside this WebView's `textarea` with `FLAG_SECURE` on; one-minute check per device.
+
+**Recommended shape (web only):** a **Dictation sheet** (reusing `Sheet` from `forms.tsx`) with a plain textarea that is *not* autosaved, the review layer (B3) below it, and an **Insert into note** button. This keeps the "nothing saved until confirmed" rule that the inline 240 ms autosave would otherwise break. Dictating straight into an inline editor stays possible but bypasses review; the review layer can also be run on any existing note ("Review note").
+
+**What is lost:**
+- Transcribing an *existing* recording (the original Phase 3 file-transcription path). The keyboard hears live speech only.
+- Any audio linked to a dictation: nothing is recorded or retained.
+- Control and consistency: no biasing with our drug list, no confidence scores, no partial results, no known accuracy. Accuracy is whatever each phone's keyboard does, and it can change with a keyboard update.
+- A reproducible test across devices (mitigated by B4's text-hypothesis scoring).
+
+**Privacy limit:** the app **cannot verify that the keyboard processes speech offline**, which engine it uses, or what the keyboard vendor retains or syncs (personalisation, "improve" sharing, clipboard sync). The keyboard is already inside the trust boundary because it sees everything typed, but voice adds audio. Proposed (attestation, not enforcement):
+1. **One-time Voice setup note** (a "Voice" row, consistent with decision D7): states the limit in plain words and gives a checklist: install the offline English voice-typing pack, switch off cloud/"improve" sharing and personalisation, use only a keyboard you have reviewed. The acknowledgement and date are stored in a **new** key `vellum-voice-setup-v1` (no existing key renamed).
+2. **Airplane-mode check on each device.** A "Dictation self-test" in the same sheet shows whether the page sees the network as offline (`navigator.onLine`) and asks for a fixed invented sentence by voice. A pass is recorded as `{date, offlineSeen, passed}`. **[unverified]** that `navigator.onLine` reflects airplane mode in Android WebView without `ACCESS_NETWORK_STATE` (the app does not hold it and I would not add one); the fallback is a manual "I did this in airplane mode" confirmation.
+3. The app shows "last verified: date" and asks for a re-check after 90 days. Reacting to a keyboard change or update would need native code (reading the default keyboard id), which I propose to leave out unless you want it.
+A pass proves only that this keyboard produced text offline on that day.
+
+## B2. Option R: `SpeechRecognizer` from an in-app mic button (on-device only)
+
+**What exists [docs]:**
+
+| API | Level | Notes |
+|---|---|---|
+| `SpeechRecognizer.isOnDeviceRecognitionAvailable(Context)` | **31** | If false, `createOnDeviceSpeechRecognizer` fails. |
+| `SpeechRecognizer.createOnDeviceSpeechRecognizer(Context)` | **31** (not 33) | Throws `UnsupportedOperationException` iff the check above is false. Main thread only; `destroy()` required; `setRecognitionListener` before use. |
+| `RecognizerIntent.EXTRA_BIASING_STRINGS` (`ArrayList<String>`) | **33** | "Optional list of strings towards which the recognizer should bias". |
+| `checkRecognitionSupport(Intent, Executor, RecognitionSupportCallback)`, `RecognitionSupport` | **33** | Lists `getInstalledOnDeviceLanguages`, `getSupportedOnDeviceLanguages` (supported but needs download), `getPendingOnDeviceLanguages`, `getOnlineLanguages`. For an on-device recognizer `getOnlineLanguages` is documented as *expected to be empty*. |
+| `triggerModelDownload(Intent)` / with `ModelDownloadListener` | **33** / **34** | "Might trigger user interaction to approve the download." |
+| `ERROR_LANGUAGE_NOT_SUPPORTED` (12), `ERROR_LANGUAGE_UNAVAILABLE` (13, "supported but not downloaded yet"), `ERROR_CANNOT_CHECK_SUPPORT` (14) | 31 / 31 / 33 | |
+| `EXTRA_PREFER_OFFLINE` | 23 | A hint; the docs say it "may have no effect". Not a way to force offline. |
+| `EXTRA_PARTIAL_RESULTS`, `CONFIDENCE_SCORES`, `EXTRA_ENABLE_FORMATTING` (33) | 8 / 8 / 33 | Formatting returns formatted and raw hypotheses. |
+
+**Minimum level:** the app is `minSdk 24`, `targetSdk 35` [repo: `android/build-apk.sh`]. Creating the on-device recognizer needs 31, but biasing and the support/download calls need **33**, so the practical floor for Option R is **API 33**, gated at runtime; below that only Option K is offered.
+
+**No on-device pack installed:** either `isOnDeviceRecognitionAvailable` is false (no on-device service at all) or recognition fails with `ERROR_LANGUAGE_UNAVAILABLE`. Flow: `checkRecognitionSupport` → if the language is in "supported, needs download", explain and call `triggerModelDownload`. The download is performed by the system speech component, not by Vellum's code, and it needs the network once; Vellum adds no network use and no permission. Then re-check.
+
+**Forcing offline:** the strongest available control is to use only `createOnDeviceSpeechRecognizer` and to refuse to run unless `getOnlineLanguages` is empty and the language is installed. The docs do not promise that the implementing service never touches the network, so the airplane-mode test of B1 (item 2) applies per device too.
+
+**Inside the WebView bridge:**
+- `SpeechRecognizer` opens the microphone itself, so it does **not** pass through `WebChromeClient.onPermissionRequest` and `NativeAudioPermissionPolicy.canGrant`. A new Android-free policy class is needed (working name `NativeDictationPolicy`) enforcing the same invariants: trusted origin (`https://appassets.androidplatform.net`, main frame, no user-info), `RECORD_AUDIO` granted by the OS (requested at point of use through the existing `beginMicrophoneCapture` flow), capture explicitly armed by a native-side request that expires after 10 s, **one audio consumer at a time** (shared with the web recorder and the chooser's sound-recorder intent), cleared on `onPause`/`onDestroy` (`cancel()` then `destroy()`).
+- New actions (working names `dictationStatus`, `startDictation`, `stopDictation`) added to `isActionAllowed`, each validating `id` (1 to 96 chars), one-shot by `id`, fixed non-sensitive error text, and a validated payload: language from a fixed enum, biasing list capped in count and per-string length with a restricted character set, nothing else accepted. Results flow native to web as `postMessage` events on the existing `addWebMessageListener` channel; **never** `evaluateJavascript` with data, never `addJavascriptInterface`. Result text is capped in length, never logged, and error codes map to fixed labels.
+- Biasing list: the drug part of the lexicon (about 100 short strings) or a per-context subset.
+- No audio is retained (same loss as K), unless a later design passes our own capture to the recognizer through `EXTRA_AUDIO_SOURCE` (API 33), which the docs say a recognizer may ignore.
+- New tests: wrong origin, non-main frame, malformed and oversized payloads, expired arm, second consumer while one is active, cleanup on pause and destroy, no `Log.*` of results; registered in `android/test-security-hardening.sh`.
+
+**Could not verify [unverified]:** whether any shipping on-device service honours `EXTRA_BIASING_STRINGS`, or its size limit; which devices have an on-device service at all and how big its language pack is; whether the on-device recognizer ever uses the network; whether `<queries>` for `android.speech.RecognitionService` is needed for the on-device variant (the docs require it for `createSpeechRecognizer` on API 30+); real accuracy and latency on drug names; behaviour on calls, notifications and rotation. All of these need a physical phone.
+
+## B3. Review layer (common to K and R)
+
+Pure web layer (`src/lib/casebook/review/*` and a sheet), no native code. Inputs are plain text, so it works on keyboard text, `SpeechRecognizer` text, or typed text.
+
+**(a) Lexicon.** Seeded from `voice-harness/vellum-terms-combined.txt` (477 entries: 103 drugs, 66 anatomy, 56 procedures, 39 phrases, and others) through a build-time generated module, so the seed ships with the app and is not stored per user. **Seed gap:** the seed's `unit:` entries are spoken forms ("milligrams per kilogram"); typed text needs written forms ("mg", "mcg", "mL", "mmHg", "units", "%", "mg/kg", "mcg/kg", "L/min", "bpm") added to the seed. British/American variants and drug synonyms (lignocaine/lidocaine) are separate entries linked as one drug. User data is a delta: `{added: [], hidden: [seed ids]}`.
+
+**(b) Suggest-only fuzzy matching, no dependencies.** Windows of 1 to 3 words from the text; each window is compared with each lexicon term with a combined score: 0.5 × letter similarity (1 minus edit distance over the longer length, spaces removed so "rock uranium" compares with "rocuronium") + 0.5 × similarity of a phonetic key (a hand-written consonant skeleton: `ph`→`f`, soft `c`→`s`, other `c`/`q`/`g`→`k`, `v`→`f`, `d`→`t`, `b`→`p`, vowels dropped after the first letter, repeats collapsed). Skipped: windows under 4 letters, windows containing digits, and exact lexicon matches (those are highlighted, not "corrected"). Greedy non-overlapping, best score wins. **It never edits text.**
+
+**(c) Highlighting for tap-to-confirm.** Every recognised drug name, every number followed by a unit (typed, e.g. `500 mg`, and spoken, e.g. "five hundred milligrams"), and, as a small addition I recommend, left/right/bilateral (the gate's most safety-critical token). Each highlight is a chip with states *unconfirmed* and *confirmed*; Insert/Save is blocked while unconfirmed chips remain in dictated text (behaviour for an existing note in Review mode is decision B-D4). Sound-alike pairs (the confusion table in `reports/vocab-report.md`, for example dexmedetomidine/dexamethasone) get an extra warning on the chip. Editing a span clears its confirmation.
+
+**(d) Tap-to-accept.** A suggestion appears as a chip: "rock uranium → rocuronium?" with **Accept**, **Dismiss** and **Not a drug**. Accept replaces exactly that span in the draft, with one-step undo. Nothing is applied without a tap.
+
+**(e) Personal correction memory.** After one accepted tap, `{heard: "rock uranium", correct: "rocuronium", count, lastUsedAt}` is stored. The next time the same heard text appears it is suggested first, with score 1.0, but still needs a tap. Limits: `correct` must be a lexicon entry (so free-text patient names are never stored as targets), `heard` at most 3 words and 60 characters, at most 1,000 entries (least recently used dropped). The heard fragments are dictation text, so they are patient-adjacent: never logged, never in the plaintext CSV.
+- **Storage and schema [repo]:** casebook state moves from `CASEBOOK_SCHEMA_VERSION = 1` to **2** (`store.ts:19`), adding `lexicon: {version: 1, added, hidden, corrections}` with a v1→v2 migration that defaults it to empty. A fixture test of the v1 envelope is required (project rule). The existing check at `store.ts:187` already makes an older app refuse newer data with a clear error. `vellum-casebook-v1` and the IndexedDB name stay unchanged.
+- **Encrypted export [repo]:** the encrypted archive is an encrypted *CSV* with a fixed patient column set (`archive.ts:33-34, 501`), so lexicon data does not fit. Proposal: a new magic `VELLUM2` whose AES-GCM payload is JSON `{csv, lexicon}`, same PBKDF2 (120,000) + AES-GCM; the app reads both `VELLUM1` and `VELLUM2`. An older app rejects `VELLUM2` with "not an encrypted Vellum archive" (`isEncryptedArchive` compares the magic), which is a loud refusal. The plaintext CSV never contains the lexicon or corrections. Round-trip and old-file tests required.
+
+**(f) Managing entries.** A "Lexicon" screen under the Voice row: search, add (term, category, optional written/alternate forms), hide or restore a seed entry, delete own entry, list and delete individual corrections, "reset corrections". Validation: term 2 to 60 characters, letters, digits, space, hyphen, slash, percent; at most 2,000 user entries; duplicates merged. Removing a lexicon entry also removes corrections that point at it.
+
+**(g) Accessibility.** Every chip and button at least 48 × 48 px (44 px absolute minimum); each chip has an accessible name that states its kind, text and state ("Drug, rocuronium, unconfirmed. Double tap to confirm"), suggestion chips read "Suggestion: replace 'rock uranium' with rocuronium. Accept"; state changes announced through an `aria-live="polite"` region; colour is never the only signal (icon and text label as well); focus order follows reading order; sheet traps and restores focus. Verified with TalkBack on a device and with an automated check of target sizes in the web tests.
+
+## B4. Matcher analysis, proposed thresholds, and scoring keyboard text
+
+**Method [measured].** The matcher of B3(b) prototyped in a throwaway script and run on the saved hypotheses of all six engine runs (clean clips only), lexicon = the 103 drug terms. Per clip, each drug mention that was not exact is matched against the suggestions the matcher would show; a suggestion for a drug said in that clip counts as right, any other suggestion as wrong.
+**Caveats:** the lexicon is seeded from the same list the references use (optimistic); right/wrong is a clip-level proxy, so a few "wrong" ones may be real drugs said elsewhere; the hypotheses come from the speech engines, not from keyboards, so keyboard errors will differ.
+
+Non-exact drug mentions recovered as a right suggestion / wrong suggestions shown, by similarity threshold θ:
+
+| Engine | Non-exact mentions | θ 0.70 | θ 0.75 | θ 0.80 |
+|---|---|---|---|---|
+| vosk-small | 67 | 16 / 13 | 11 / 6 | 6 / 1 |
+| vosk-lgraph | 55 | 17 / 24 | 13 / 18 | 10 / 7 |
+| whisper base.en | 52 | 32 / 15 | 28 / 9 | 24 / 4 |
+| whisper base.en + prompt | 51 | 36 / 17 | 31 / 9 | 26 / 3 |
+| whisper small.en | 38 | 28 / 32 | 28 / 18 | 27 / 9 |
+| whisper small.en + prompt | 39 | 21 / 29 | 21 / 16 | 19 / 8 |
+
+Reading it:
+- **Ceiling if every right suggestion were accepted** (exact + recovered, of 80 spoken drug names, θ 0.80): whisper small.en 86%, small.en + prompt 75%, base.en + prompt 69%, base.en 65%, vosk-lgraph 44%, vosk-small 24%. Even the best case stays under the 90% gate row, and drugs the engine drops entirely ("(nothing)", mostly Vosk) cannot be suggested. The review layer is a safety net with a human in the loop, not a way to pass the gate.
+- **Wrong suggestions** cost the user taps; going from θ 0.75 to 0.65 they roughly double or more. Unknown drugs (true drug removed from the lexicon) still drew a wrong suggestion for 0 to 8% of garbled mentions at θ 0.75 and up to about 20% at 0.65.
+- **Proposed thresholds:** **θ = 0.75 to show a suggestion**, **0.80 as the stricter setting if suggestion noise annoys**, nothing below 0.75, no auto-apply at any level. Both are constants in one place and are **provisional**: they must be re-tuned on keyboard text (below) before they are fixed.
+
+**Scoring keyboard text without audio (proposed change to the harness, not yet made).** The harness already scores any folder `out/NAME/clipNN.hyp.txt` against `samples/clipNN.ref.txt`, so you can dictate the clip scripts into the keyboard and save the text into `out/keyboard-DEVICE/` today. What is missing, and what I propose to add on approval:
+1. **Spoken-form normalisation** in `score.py` for digits, ordinals and units ("64" → "sixty four", "12th" → "twelfth", "mg" → "milligrams"). This also fixes the Whisper number/date artefact above, and changes existing scores, so I will re-score the saved runs and report old and new side by side.
+2. `--hyp-file PATH` for `compare.py` and `gate.py`: one text file with `=== clip01` style separators, split into per-clip hypotheses, so a single paste from the phone is enough.
+3. A `--matcher` option that reports raw versus matcher-assisted drug results, which lets θ be re-tuned on the keyboard text.
+4. Tests in `test_harness.py` for each.
+Effort S to M. Clips with spelled-out references stay as they are.
+
+## B5. Effort, risks, and the existing Phase 2 to 4 plan
+
+S ≤ 1 day, M ≈ 2 to 4 days, L ≥ 1 week.
+
+| Item | Effort | Notes |
+|---|---|---|
+| Option K: Dictation sheet, setup note, airplane-mode self-test | **S to M** | Web only; two new local keys; no native change. |
+| Option R: `NativeDictationPolicy`, bridge actions, event channel, tests | **L** | Needs API 33 devices; support/download flow; policy and bridge tests; manifest change possible (`<queries>`). Not started unless K is insufficient. |
+| Lexicon (a) and management (f) | **M** | Seed generation, written unit forms, UI, limits. |
+| Matcher (b) with tests | **S to M** | Pure TypeScript; table-driven tests from the saved hypotheses. |
+| Highlight and confirm (c), number/unit parser | **M** | Typed and spoken forms; confirm state; gating. |
+| Suggest and accept (d) | **S** | |
+| Correction memory (e): schema v2, migration, `VELLUM2` export/import, fixtures | **M to L** | The schema, migration, round-trip and old-file tests are the real cost. |
+| Accessibility (g) | **S to M** | Plus TalkBack pass on a device. |
+| Scorer text input (B4) | **S to M** | Harness only. |
+
+**Risks:**
+- **Keyboard offline use cannot be verified** (B1); attestation only. Residual risk is accepted by you or Option R is used.
+- **Review fatigue and false assurance:** too many chips get ignored; a fluent wrong text can still pass if the matcher has no suggestion (a dropped or non-drug word). Labelling as unverified stays.
+- **Inline autosave** can store unreviewed dictation if the user bypasses the sheet. Mitigation: the Dictation sheet is the primary path.
+- **Matcher noise or silent misses** on real keyboard text; thresholds are provisional.
+- **Correction memory** holds dictation fragments: encrypted export only, no logs, capped, deletable.
+- **Schema v2 and `VELLUM2`** can strand data if wrong: fixture, round-trip and downgrade-refusal tests first.
+- **Keyboard accuracy is outside our control** and can change with an update.
+- **Option R** depends on devices with a working on-device service, and on biasing being honoured (unknown).
+
+**What happens to the existing plan:**
+- **Original Phase 1 (spike):** done; Vosk and Whisper stay NO-GO. The harness and reports are kept.
+- **Original Phase 2 (native Vosk engine, model store, arbiter, state machine):** **paused, not deleted.** Its microphone-owner design (section 2) and bridge validation pattern (section 6) are reused if Option R goes ahead. The Vosk model delivery decisions D1 to D3 are no longer needed.
+- **Original Phase 3 (UI integration):** **kept and re-scoped:** the Dictation/review sheet, the three editors' entry points and the Voice row become the home of Part B; file transcription from existing recordings is **dropped** (no engine), and audio retention is dropped.
+- **Original Phase 4 (extractive summariser):** **unchanged in design, still after** the review layer; it must preserve confirmed drugs, doses and laterality verbatim.
+- **Original Phase 5 (verification) and Phase 6 (abstractive note):** unchanged in intent, narrowed to the new scope; the airplane-mode device test (section 7) becomes the main device test.
+- **Proposed new order:** (1) scorer text input and your keyboard test (read-only data collection by you); (2) Dictation sheet with setup/self-test (Option K); (3) lexicon, matcher, confirm and suggest, accessibility; (4) correction memory with schema v2 and `VELLUM2`; (5) summariser; (6) Option R only if K's measured accuracy is not acceptable.
+
+**Decisions I need from you (Part B):**
+- **B-D1.** Proceed with Option K first and defer Option R? (Recommended.)
+- **B-D2.** Dictation sheet with Insert as the primary path (recommended), versus dictating directly into editors.
+- **B-D3.** Add laterality words to the highlight set (recommended), and the written unit forms to the seed.
+- **B-D4.** In Review mode on an existing note, must unconfirmed chips block saving, or only warn?
+- **B-D5.** `VELLUM2` envelope for the encrypted export (recommended), and schema v2 for the lexicon and corrections.
+- **B-D6.** Approve the scorer changes in B4 (digit normalisation changes existing scores and I would re-score the saved runs).
+- **B-D7.** Which phones and keyboards do you have for the keyboard test, and which Android versions (this decides whether Option R is even possible)?
+
+**Files this revision changes:** only `docs/voice-transcription-plan.md`. Stopping for your approval.
 
 ---
 

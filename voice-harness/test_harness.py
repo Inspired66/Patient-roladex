@@ -38,6 +38,19 @@ class ScoreTests(unittest.TestCase):
         r = self.run_one("the left knee", "the right knee")
         self.assertAlmostEqual(r["wer"], 1 / 3)
 
+    def test_case_punctuation_and_british_spelling(self):
+        self.assertEqual(score.normalise(" ANAESTHETIC's, oesophageal! "),
+                         ["anaesthetics", "oesophageal"])
+        r = self.run_one("ANAESTHETIC, oesophageal!", "anesthetic. esophageal?")
+        self.assertEqual(r["wer"], 0)
+        self.assertEqual(r["spelling_variants"], {
+            "count": 2,
+            "pairs": {
+                "anaesthetic/anesthetic": 1,
+                "oesophageal/esophageal": 1,
+            },
+        })
+
     def test_laterality_swap_is_counted(self):
         r = self.run_one("left knee and right hip", "right knee and right hip")
         self.assertEqual(r["categories"]["laterality"]["correct"], 1)
@@ -58,6 +71,8 @@ class ScoreTests(unittest.TestCase):
     def test_terms(self):
         r = self.run_one("start heparin now", "start he parent now", [("drug", ["heparin"])])
         self.assertEqual(r["terms"]["drug"], {"correct": 0, "total": 1, "accuracy": 0.0})
+        r = self.run_one("start lignocaine now", "start lidocaine now", [("drug", ["lignocaine"])])
+        self.assertEqual(r["terms"]["drug"], {"correct": 1, "total": 1, "accuracy": 1.0})
 
 
 class CompareTests(unittest.TestCase):
@@ -70,14 +85,19 @@ class CompareTests(unittest.TestCase):
             for e, hyp in (("a", "give twelve milligrams left"), ("b", "give twenty milligrams right")):
                 os.makedirs(os.path.join(out, e))
                 open(os.path.join(out, e, "c1.hyp.txt"), "w").write(hyp)
+                open(os.path.join(out, e, "noisy1.hyp.txt"), "w").write("noisy sample")
             os.makedirs(samples)
             open(os.path.join(samples, "c1.ref.txt"), "w").write("give twelve milligrams left")
+            open(os.path.join(samples, "noisy1.ref.txt"), "w").write("noisy sample")
             results = compare.evaluate(samples, out)
+            clean_results = compare.evaluate(samples, out, clean_only=True)
             self.assertEqual(list(results), ["a", "b"])
             self.assertEqual(results["a"]["wer"], 0)
+            self.assertEqual(clean_results["a"]["counts"]["N"], 4)
             self.assertGreater(results["b"]["wer"], 0)
             text = compare.table(results)
             self.assertEqual(len(text.splitlines()), 4)
+            self.assertIn("Spelling-only", text)
 
 
 class GateTests(unittest.TestCase):
@@ -102,6 +122,14 @@ class GateTests(unittest.TestCase):
         self.assertEqual(self.classify("give ropivacaine", "give rope of a cane"),
                          [("garbled", "ropivacaine", "rope of a cane")])
         self.assertEqual(self.classify("give ropivacaine now", "give now"), [("garbled", "ropivacaine", "(nothing)")])
+
+    def test_spelling_variant_is_not_a_different_drug(self):
+        import gate
+        ref = score.normalise("give magnesium sulphate")
+        hyp = score.normalise("give magnesium sulfate")
+        drugs = {("magnesium", "sulphate"), ("magnesium", "sulfate")}
+        self.assertEqual(gate.classify_drugs("c", ref, hyp, drugs),
+                         [("c", "variant", "magnesium sulphate", "magnesium sulfate")])
 
     def test_multiword_drug(self):
         self.assertEqual(self.classify("glyceryl trinitrate spray", "glyceryl trinitrate spray")[0][0], "exact")

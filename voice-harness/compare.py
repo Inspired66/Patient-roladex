@@ -6,7 +6,7 @@ written by Harness.java or by any other tool, so non-Java engines can be added b
 hypothesis files into their own folder). OUT/ENGINE_ID/timing.csv is optional and adds the
 mean real-time factor (desktop timing only; phone latency is measured separately).
 
-Usage: compare.py SAMPLES_DIR OUT_DIR [--terms TERMS.txt] [--markdown OUT.md]
+Usage: compare.py SAMPLES_DIR OUT_DIR [--terms TERMS.txt] [--clean-only] [--markdown OUT.md]
 """
 import csv
 import os
@@ -23,13 +23,14 @@ def mean_rtf(path):
     return sum(values) / len(values) if values else None
 
 
-def evaluate(samples, out, terms=()):
+def evaluate(samples, out, terms=(), clean_only=False):
     results = {}
     for engine in sorted(d for d in os.listdir(out) if os.path.isdir(os.path.join(out, d))):
         folder = os.path.join(out, engine)
         if not any(f.endswith(".hyp.txt") for f in os.listdir(folder)):
             continue
-        r = score.score(score.load_pairs(samples, folder), terms)
+        pairs = score.load_pairs(samples, folder, clean_only=clean_only)
+        r = score.score(pairs, terms)
         r["rtf"] = mean_rtf(os.path.join(folder, "timing.csv"))
         results[engine] = r
     return results
@@ -38,10 +39,15 @@ def evaluate(samples, out, terms=()):
 def table(results):
     cats = ["laterality", "numbers", "dates"]
     term_cats = sorted({c for r in results.values() for c in r["terms"]})
-    header = ["Engine", "WER"] + cats + [f"term:{c}" for c in term_cats] + ["RTF"]
+    header = ["Engine", "WER", "Spelling-only"] + cats + [f"term:{c}" for c in term_cats] + ["RTF"]
     lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
     for engine, r in results.items():
-        cells = [engine, score.pct(r["wer"])]
+        spellings = r["spelling_variants"]
+        details = "; ".join(f"{pair} x{count}" for pair, count in spellings["pairs"].items())
+        spelling_cell = str(spellings["count"])
+        if details:
+            spelling_cell += f" ({details})"
+        cells = [engine, score.pct(r["wer"]), spelling_cell]
         for c in cats:
             v = r["categories"][c]
             cells.append(f"{score.pct(v['accuracy'])} ({v['correct']}/{v['total']})")
@@ -55,8 +61,12 @@ def table(results):
 
 def main(argv):
     args, flags, i = [], {"--terms": None, "--markdown": None}, 0
+    clean_only = False
     while i < len(argv):
-        if argv[i] in flags:
+        if argv[i] == "--clean-only":
+            clean_only = True
+            i += 1
+        elif argv[i] in flags:
             flags[argv[i]] = argv[i + 1]
             i += 2
         else:
@@ -66,7 +76,7 @@ def main(argv):
         print(__doc__)
         return 2
     terms = score.load_terms(flags["--terms"]) if flags["--terms"] else []
-    results = evaluate(*args, terms)
+    results = evaluate(*args, terms, clean_only=clean_only)
     if not results:
         print("No engine output found.", file=sys.stderr)
         return 1

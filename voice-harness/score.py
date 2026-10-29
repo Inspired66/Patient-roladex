@@ -19,8 +19,70 @@ import json
 import os
 import re
 import sys
+from collections import Counter
 
 LATERALITY = {"left", "right", "bilateral", "bilaterally"}
+SPELLING_VARIANT_PAIRS = (
+    ("anaesthetic", "anesthetic"),
+    ("anaesthesia", "anesthesia"),
+    ("anaesthetist", "anesthetist"),
+    ("anaesthetise", "anesthetize"),
+    ("anaesthetised", "anesthetized"),
+    ("anaesthetising", "anesthetizing"),
+    ("anaemia", "anemia"),
+    ("anaemic", "anemic"),
+    ("caesarean", "cesarean"),
+    ("diarrhoea", "diarrhea"),
+    ("foetus", "fetus"),
+    ("foetal", "fetal"),
+    ("gynaecology", "gynecology"),
+    ("gynaecologist", "gynecologist"),
+    ("haematology", "hematology"),
+    ("haematological", "hematological"),
+    ("haematoma", "hematoma"),
+    ("haematocrit", "hematocrit"),
+    ("haemoglobin", "hemoglobin"),
+    ("haemorrhage", "hemorrhage"),
+    ("haemorrhagic", "hemorrhagic"),
+    ("haemostasis", "hemostasis"),
+    ("ischaemia", "ischemia"),
+    ("ischaemic", "ischemic"),
+    ("leukaemia", "leukemia"),
+    ("leukaemic", "leukemic"),
+    ("mobilise", "mobilize"),
+    ("mobilised", "mobilized"),
+    ("mobilising", "mobilizing"),
+    ("normalise", "normalize"),
+    ("normalised", "normalized"),
+    ("normalising", "normalizing"),
+    ("oedema", "edema"),
+    ("oedematous", "edematous"),
+    ("oesophageal", "esophageal"),
+    ("oesophagus", "esophagus"),
+    ("oesophagitis", "esophagitis"),
+    ("oesophagectomy", "esophagectomy"),
+    ("oestrogen", "estrogen"),
+    ("oestrogenic", "estrogenic"),
+    ("orthopaedic", "orthopedic"),
+    ("orthopaedics", "orthopedics"),
+    ("paediatric", "pediatric"),
+    ("paediatrics", "pediatrics"),
+    ("paediatrician", "pediatrician"),
+    ("paralyse", "paralyze"),
+    ("paralysed", "paralyzed"),
+    ("paralysing", "paralyzing"),
+    ("sulphate", "sulfate"),
+    ("sulphur", "sulfur"),
+    ("sulphide", "sulfide"),
+    ("stabilise", "stabilize"),
+    ("stabilised", "stabilized"),
+    ("stabilising", "stabilizing"),
+    ("sterilise", "sterilize"),
+    ("sterilised", "sterilized"),
+    ("sterilising", "sterilizing"),
+    ("lignocaine", "lidocaine"),
+)
+SPELLING_CANONICAL = {variant: american for variant, american in SPELLING_VARIANT_PAIRS}
 UNITS = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen "
          "fifteen sixteen seventeen eighteen nineteen").split()
 TENS = "twenty thirty forty fifty sixty seventy eighty ninety".split()
@@ -33,11 +95,27 @@ MONTHS = set(("january february march april may june july august september octob
 
 
 def normalise(text):
-    return re.findall(r"[a-z0-9']+", text.lower())
+    return re.findall(r"[a-z0-9]+", re.sub(r"['’]", "", text.lower()))
+
+
+def spelling_key(token):
+    return SPELLING_CANONICAL.get(token, token)
+
+
+def tokens_match(ref, hyp):
+    return spelling_key(ref) == spelling_key(hyp)
+
+
+def spelling_equivalent(ref, hyp):
+    return ref != hyp and tokens_match(ref, hyp)
+
+
+def sequences_match(ref, hyp):
+    return len(ref) == len(hyp) and all(tokens_match(a, b) for a, b in zip(ref, hyp))
 
 
 def align(ref, hyp):
-    """Levenshtein alignment. Returns (S, D, I, ref_ok) where ref_ok[i] is True if ref[i] matched."""
+    """Return edit counts, matched-reference flags, and spelling-only word pairs."""
     n, m = len(ref), len(hyp)
     d = [[0] * (m + 1) for _ in range(n + 1)]
     for i in range(n + 1):
@@ -46,15 +124,18 @@ def align(ref, hyp):
         d[0][j] = j
     for i in range(1, n + 1):
         for j in range(1, m + 1):
-            cost = 0 if ref[i - 1] == hyp[j - 1] else 1
+            cost = 0 if tokens_match(ref[i - 1], hyp[j - 1]) else 1
             d[i][j] = min(d[i - 1][j - 1] + cost, d[i - 1][j] + 1, d[i][j - 1] + 1)
     ok = [False] * n
+    spelling_variants = Counter()
     s = dl = ins = 0
     i, j = n, m
     while i > 0 or j > 0:
-        if i > 0 and j > 0 and d[i][j] == d[i - 1][j - 1] + (0 if ref[i - 1] == hyp[j - 1] else 1):
-            if ref[i - 1] == hyp[j - 1]:
+        if i > 0 and j > 0 and d[i][j] == d[i - 1][j - 1] + (0 if tokens_match(ref[i - 1], hyp[j - 1]) else 1):
+            if tokens_match(ref[i - 1], hyp[j - 1]):
                 ok[i - 1] = True
+                if spelling_equivalent(ref[i - 1], hyp[j - 1]):
+                    spelling_variants[(ref[i - 1], hyp[j - 1])] += 1
             else:
                 s += 1
             i, j = i - 1, j - 1
@@ -64,7 +145,7 @@ def align(ref, hyp):
         else:
             ins += 1
             j -= 1
-    return s, dl, ins, ok
+    return s, dl, ins, ok, spelling_variants
 
 
 def spans(ref, wanted):
@@ -102,7 +183,7 @@ def date_spans(ref):
 
 def contains(tokens, term):
     n = len(term)
-    return n > 0 and any(tokens[i:i + n] == term for i in range(len(tokens) - n + 1))
+    return n > 0 and any(sequences_match(tokens[i:i + n], term) for i in range(len(tokens) - n + 1))
 
 
 def load_terms(path):
@@ -120,9 +201,11 @@ def score(pairs, terms=()):
     cats = {"laterality": [0, 0], "numbers": [0, 0], "dates": [0, 0]}
     term_stats = {}
     per_file = {}
+    spelling_variants = Counter()
     for name, ref, hyp in pairs:
-        s, dl, ins, ok = align(ref, hyp)
+        s, dl, ins, ok, variants = align(ref, hyp)
         tot["S"] += s; tot["D"] += dl; tot["I"] += ins; tot["N"] += len(ref)
+        spelling_variants.update(variants)
         per_file[name] = (s + dl + ins) / max(1, len(ref))
         for i, w in enumerate(ref):
             if w in LATERALITY:
@@ -142,17 +225,23 @@ def score(pairs, terms=()):
     wer = (tot["S"] + tot["D"] + tot["I"]) / max(1, tot["N"])
     return {
         "wer": wer, "counts": tot, "per_file_wer": per_file,
+        "spelling_variants": {
+            "count": sum(spelling_variants.values()),
+            "pairs": {f"{ref}/{hyp}": count for (ref, hyp), count in sorted(spelling_variants.items())},
+        },
         "categories": {k: {"correct": v[0], "total": v[1], "accuracy": v[0] / v[1] if v[1] else None}
                        for k, v in cats.items()},
         "terms": {k: {"correct": v[0], "total": v[1], "accuracy": v[0] / v[1]} for k, v in term_stats.items()},
     }
 
 
-def load_pairs(samples, out):
+def load_pairs(samples, out, clean_only=False):
     pairs = []
     for f in sorted(os.listdir(samples)):
         if f.endswith(".ref.txt"):
             name = f[:-8]
+            if clean_only and name.lower().startswith("noisy"):
+                continue
             hyp_path = os.path.join(out, name + ".hyp.txt")
             if not os.path.isfile(hyp_path):
                 print(f"missing hypothesis for {name}", file=sys.stderr)
@@ -184,6 +273,7 @@ def main(argv):
     result = score(load_pairs(*args), terms)
     c = result["counts"]
     print(f"Overall WER {pct(result['wer'])}  (S={c['S']} D={c['D']} I={c['I']} N={c['N']})")
+    print(f"Spelling-only differences excluded from WER: {result['spelling_variants']['count']}")
     for k, v in result["categories"].items():
         print(f"  {k:11s} {v['correct']}/{v['total']}  {pct(v['accuracy'])}")
     for k, v in sorted(result["terms"].items()):

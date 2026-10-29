@@ -16,7 +16,8 @@ Rows (pass / conditional / fail):
 A "different real drug" is any other drug from the term list (drug: lines) that appears in the
 part of the hypothesis aligned to the spoken drug. Known synonym pairs (lidocaine/lignocaine,
 ...) are reported as "same drug, other spelling": not exact, not a different drug. Every
-percentage is printed with its counts, followed by the full error table.
+percentage is printed with its counts, followed by the full error table. British/American spelling
+variants are excluded from WER and listed separately; drug spellings remain visible as variants.
 
 Usage: gate.py SAMPLES_DIR OUT_DIR --terms TERMS.txt [--markdown OUT.md]
 """
@@ -59,11 +60,11 @@ def align_ops(ref, hyp):
         d[0][j] = j
     for i in range(1, n + 1):
         for j in range(1, m + 1):
-            cost = 0 if ref[i - 1] == hyp[j - 1] else 1
+            cost = 0 if score.tokens_match(ref[i - 1], hyp[j - 1]) else 1
             d[i][j] = min(d[i - 1][j - 1] + cost, d[i - 1][j] + 1, d[i][j - 1] + 1)
     ops, i, j = [], n, m
     while i > 0 or j > 0:
-        if i > 0 and j > 0 and d[i][j] == d[i - 1][j - 1] + (0 if ref[i - 1] == hyp[j - 1] else 1):
+        if i > 0 and j > 0 and d[i][j] == d[i - 1][j - 1] + (0 if score.tokens_match(ref[i - 1], hyp[j - 1]) else 1):
             ops.append((i - 1, j - 1))
             i, j = i - 1, j - 1
         elif i > 0 and d[i][j] == d[i - 1][j] + 1:
@@ -92,7 +93,7 @@ def drug_occurrences(ref, drugs):
 
 
 def same_drug(a, b):
-    return a == b or any(a in g and b in g for g in SYNONYM_GROUPS)
+    return score.sequences_match(a, b) or any(a in g and b in g for g in SYNONYM_GROUPS)
 
 
 def classify_drugs(name, ref, hyp, drugs):
@@ -141,6 +142,7 @@ def evaluate_subset(pairs, drugs):
     exact = sum(r[1] == "exact" for r in records)
     other = sum(r[1] == "other_drug" for r in records)
     values = {"wer": (result["wer"], result["counts"]["S"] + result["counts"]["D"] + result["counts"]["I"], result["counts"]["N"])}
+    values["spelling_variants"] = result["spelling_variants"]
     for k in ("laterality", "numbers", "dates"):
         c = result["categories"][k]
         values[k] = (c["accuracy"], c["correct"], c["total"])
@@ -166,6 +168,11 @@ def render_subset(title, values, records, clips):
         lines.append(f"| {label} | {score.pct(v)} | {num}/{den} ({what}) | {status(v, hi, ok, cond)} |")
     variants = sum(r[1] == "variant" for r in records)
     garbled = sum(r[1] == "garbled" for r in records)
+    spelling = values["spelling_variants"]
+    spelling_pairs = "; ".join(
+        f"{pair} x{count}" for pair, count in spelling["pairs"].items()
+    ) or "none"
+    lines += ["", f"Spelling-only differences excluded from WER: {spelling['count']} ({spelling_pairs})."]
     lines += ["", f"Drug breakdown: exact {values['drug_exact'][1]}, different real drug "
               f"{values['drug_other'][1]}, same drug other spelling {variants}, "
               f"garbled or missing {garbled}, of {values['drug_exact'][2]} spoken drug names.", ""]
