@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { deleteBlob } from "./files.ts";
+import { deleteBlob, sweepOrphanBlobs } from "./files.ts";
 import { addDaysISO, todayISO } from "./format.ts";
 import { LEGACY_PROCEDURE_DATES, SAMPLE_GENDERS, seedContacts, seedPatients } from "./seed.ts";
 import type {
@@ -16,7 +16,7 @@ import type {
 } from "./types";
 
 export const CASEBOOK_STORAGE_KEY = "vellum-casebook-v1";
-export const CASEBOOK_SCHEMA_VERSION = 1;
+export const CASEBOOK_SCHEMA_VERSION = 2;
 let storageWritesEnabled = true;
 
 type CasebookState = {
@@ -26,7 +26,7 @@ type CasebookState = {
   storageError: string | null;
   addPatient: (input: PatientInput) => string;
   updatePatient: (id: string, input: PatientInput) => void;
-  patchPatient: (id: string, patch: Partial<Pick<Patient, "notes" | "attachments">>) => void;
+  patchPatient: (id: string, patch: Partial<Pick<Patient, "notes">>) => void;
   removePatient: (id: string) => void;
   addSurgery: (patientId: string, input: SurgeryInput) => string;
   updateSurgery: (patientId: string, surgeryId: string, patch: Partial<SurgeryInput>) => void;
@@ -48,7 +48,6 @@ function dropBlobs(attachments: Attachment[]) {
 }
 
 function dropPatientFiles(patient: Patient) {
-  dropBlobs(patient.attachments ?? []);
   for (const surgery of patient.surgeries) dropBlobs(surgery.attachments ?? []);
   for (const consult of patient.consults ?? []) dropBlobs(consult.attachments ?? []);
 }
@@ -79,8 +78,7 @@ function isPatient(value: unknown): value is Patient {
             typeof consult === "object" &&
             typeof consult.id === "string" &&
             isAttachments(consult.attachments),
-        ))) &&
-    isAttachments(patient.attachments)
+        )))
   );
 }
 
@@ -121,7 +119,6 @@ function normalize(patient: Patient): Patient {
     phone: typeof patient.phone === "string" ? patient.phone : "",
     email: typeof patient.email === "string" ? patient.email : "",
     notes: typeof patient.notes === "string" ? patient.notes : "",
-    attachments: normalizeFiles(patient.attachments),
     sample: patient.sample === true,
     surgeries: patient.surgeries
       .filter((surgery) => surgery && typeof surgery.id === "string")
@@ -139,6 +136,8 @@ function normalize(patient: Patient): Patient {
       .map((consult) => ({
         id: consult.id,
         date: typeof consult.date === "string" ? consult.date : "",
+        doctor: typeof consult.doctor === "string" ? consult.doctor : "",
+        medicalCentre: typeof consult.medicalCentre === "string" ? consult.medicalCentre : "",
         notes: consult.notes ?? "",
         attachments: normalizeFiles(consult.attachments),
       })),
@@ -168,6 +167,15 @@ function normalizeContacts(value: unknown): Contact[] {
     const contact = normalizeContact(item);
     return contact ? [contact] : [];
   });
+}
+
+export function referencedFileIds(patients: Patient[]) {
+  return new Set(
+    patients.flatMap((patient) => [
+      ...patient.surgeries.flatMap((surgery) => surgery.attachments.map((file) => file.id)),
+      ...patient.consults.flatMap((consult) => consult.attachments.map((file) => file.id)),
+    ]),
+  );
 }
 
 export function migrateStoredCasebook(raw: string) {
@@ -233,7 +241,6 @@ export const useCasebook = create<CasebookState>()(
           id,
           ...input,
           notes: "",
-          attachments: [],
           surgeries: [],
           consults: [],
         };
@@ -248,8 +255,6 @@ export const useCasebook = create<CasebookState>()(
         }));
       },
       patchPatient: (id, patch) => {
-        const patient = get().patients.find((item) => item.id === id);
-        if (patient && patch.attachments) keptFiles(patient.attachments, patch.attachments);
         set((state) => ({
           patients: state.patients.map((item) => (item.id === id ? { ...item, ...patch } : item)),
         }));
@@ -353,7 +358,6 @@ export const useCasebook = create<CasebookState>()(
         const nextPatients = patients.map(normalize);
         const retainedIds = new Set(
           nextPatients.flatMap((patient) => [
-            ...patient.attachments.map((file) => file.id),
             ...patient.surgeries.flatMap((surgery) => surgery.attachments.map((file) => file.id)),
             ...patient.consults.flatMap((consult) => consult.attachments.map((file) => file.id)),
           ]),
@@ -365,7 +369,6 @@ export const useCasebook = create<CasebookState>()(
         });
         for (const patient of currentPatients) {
           const attachments = [
-            ...patient.attachments,
             ...patient.surgeries.flatMap((surgery) => surgery.attachments),
             ...patient.consults.flatMap((consult) => consult.attachments),
           ];
@@ -424,6 +427,7 @@ export function bootstrapCasebook() {
       const { patients, contacts } = migrateStoredCasebook(raw);
       storageWritesEnabled = true;
       useCasebook.setState({ patients, contacts, hydrated: true, storageError: null });
+      void sweepOrphanBlobs(referencedFileIds(patients)).catch(() => undefined);
       return;
     }
     storageWritesEnabled = true;

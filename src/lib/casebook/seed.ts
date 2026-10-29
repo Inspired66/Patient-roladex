@@ -250,13 +250,14 @@ export function seedPatients(): Patient[] {
       patient.id === "p-patel"
         ? "Rooms review. No regular medicines. Anxious about fasting. No procedures booked yet."
         : "",
-    attachments: [],
     consults:
       patient.id === "p-patel"
         ? [
             {
               id: "c-patel-1",
               date: "2025-09-02",
+              doctor: "Amir Shah",
+              medicalCentre: "St Vincent's",
               notes:
                 "Preoperative consult. Fit for day surgery when a date is booked. Airway looks easy.",
               attachments: [],

@@ -18,6 +18,8 @@ export type Surgery = {
 export type Consult = {
   id: string;
   date: string;
+  doctor: string;
+  medicalCentre: string;
   notes: string;
   attachments: Attachment[];
 };
@@ -30,7 +32,6 @@ export type Patient = {
   phone: string;
   email: string;
   notes: string;
-  attachments: Attachment[];
   sample?: boolean;
   surgeries: Surgery[];
   consults: Consult[];
@@ -55,6 +56,8 @@ export type SurgeryInput = {
 
 export type ConsultInput = {
   date: string;
+  doctor: string;
+  medicalCentre: string;
   notes: string;
   attachments: Attachment[];
 };

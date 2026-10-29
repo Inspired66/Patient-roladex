@@ -11,7 +11,6 @@ function attachmentCount(patients: ReturnType<typeof migrateStoredCasebook>["pat
   return patients.reduce(
     (total, patient) =>
       total +
-      patient.attachments.length +
       patient.surgeries.reduce((sum, surgery) => sum + surgery.attachments.length, 0) +
       patient.consults.reduce((sum, consult) => sum + consult.attachments.length, 0),
     0,
@@ -37,7 +36,6 @@ export async function createVerifiedMigrationArchive(
     restored.drafts.reduce(
       (sum, patient) =>
         sum +
-        patient.files.length +
         patient.surgeries.reduce((subtotal, surgery) => subtotal + surgery.files.length, 0) +
         patient.consults.reduce((subtotal, consult) => subtotal + consult.files.length, 0),
       0,

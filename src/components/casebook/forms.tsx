@@ -242,20 +242,7 @@ export function PatientForm({
 
 type PendingFile = { key: string; file: File; url: string };
 
-export function SurgeryForm({
-  patientId,
-  surgeryId,
-  onClose,
-}: {
-  patientId: string;
-  surgeryId?: string;
-  onClose: () => void;
-}) {
-  const surgery = useCasebook((state) =>
-    state.patients.find((item) => item.id === patientId)?.surgeries.find((item) => item.id === surgeryId),
-  );
-  const addSurgery = useCasebook((state) => state.addSurgery);
-  const updateSurgery = useCasebook((state) => state.updateSurgery);
+function useDirectoryChoices() {
   const patients = useCasebook((state) => state.patients);
   const contacts = useCasebook((state) => state.contacts);
   const surgeons = useMemo(
@@ -275,6 +262,24 @@ export function SurgeryForm({
       ),
     [contacts, patients],
   );
+  return { surgeons, hospitals };
+}
+
+export function SurgeryForm({
+  patientId,
+  surgeryId,
+  onClose,
+}: {
+  patientId: string;
+  surgeryId?: string;
+  onClose: () => void;
+}) {
+  const surgery = useCasebook((state) =>
+    state.patients.find((item) => item.id === patientId)?.surgeries.find((item) => item.id === surgeryId),
+  );
+  const addSurgery = useCasebook((state) => state.addSurgery);
+  const updateSurgery = useCasebook((state) => state.updateSurgery);
+  const { surgeons, hospitals } = useDirectoryChoices();
   const typeId = useId();
   const hospitalId = useId();
   const surgeonId = useId();
@@ -452,7 +457,12 @@ export function ConsultForm({
   );
   const addConsult = useCasebook((state) => state.addConsult);
   const updateConsult = useCasebook((state) => state.updateConsult);
+  const { surgeons, hospitals } = useDirectoryChoices();
+  const doctorId = useId();
+  const centreId = useId();
   const [date, setDate] = useState(consult?.date ?? todayISO());
+  const [doctor, setDoctor] = useState(consult?.doctor ?? "");
+  const [medicalCentre, setMedicalCentre] = useState(consult?.medicalCentre ?? "");
   const [notes, setNotes] = useState(consult?.notes ?? "");
   const [error, setError] = useState("");
 
@@ -462,12 +472,13 @@ export function ConsultForm({
       setError("Date is required.");
       return;
     }
+    const details = { date, doctor: doctor.trim(), medicalCentre: medicalCentre.trim() };
     if (consultId) {
-      updateConsult(patientId, consultId, { date, notes: notes.trim() });
+      updateConsult(patientId, consultId, { ...details, notes: notes.trim() });
       onClose();
       return;
     }
-    addConsult(patientId, { date, notes: notes.trim(), attachments: [] });
+    addConsult(patientId, { ...details, notes: notes.trim(), attachments: [] });
     onClose();
   }
 
@@ -476,6 +487,28 @@ export function ConsultForm({
       <form className="stack" onSubmit={submit}>
         <Field label="Date">
           <input className="field" type="date" value={date} onChange={(event) => setDate(event.target.value)} required autoFocus />
+        </Field>
+        <Field label="Doctor (optional)">
+          <input
+            className="field"
+            list={doctorId}
+            value={doctor}
+            onChange={(event) => setDoctor(event.target.value)}
+            placeholder={surgeons.length ? "Directory or a new name" : "Type the doctor"}
+          />
+          <datalist id={doctorId}>
+            {surgeons.map((item) => (
+              <option key={item} value={item} />
+            ))}
+          </datalist>
+        </Field>
+        <Field label="Medical centre (optional)">
+          <input className="field" list={centreId} value={medicalCentre} onChange={(event) => setMedicalCentre(event.target.value)} />
+          <datalist id={centreId}>
+            {hospitals.map((item) => (
+              <option key={item} value={item} />
+            ))}
+          </datalist>
         </Field>
         <Field label="Notes">
           <textarea className="area" value={notes} onChange={(event) => setNotes(event.target.value)} placeholder="Consult note" />

@@ -44,7 +44,6 @@ export type DraftPatient = {
   email: string;
   sample: boolean;
   notes: string;
-  files: PackedFile[];
   surgeries: Array<Omit<Surgery, "attachments"> & { files: PackedFile[] }>;
   consults: Array<Omit<Consult, "attachments"> & { files: PackedFile[] }>;
 };
@@ -198,15 +197,7 @@ export async function patientsToCsv(
     const push = async (kind: string, general: string, record: string[]) => {
       lines.push([...[kind], ...shared, general, ...record].map((value) => cell(value)).join(","));
     };
-    await push("patient", patient.notes, [
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      await packFiles(patient.attachments, fileStore),
-    ]);
+    await push("patient", patient.notes, ["", "", "", "", "", "", ""]);
     for (const surgery of patient.surgeries) {
       await push("procedure", "", [
         surgery.id,
@@ -223,8 +214,8 @@ export async function patientsToCsv(
         consult.id,
         consult.date,
         "Consult",
-        "",
-        "",
+        consult.doctor,
+        consult.medicalCentre,
         consult.notes,
         await packFiles(consult.attachments, fileStore),
       ]);
@@ -265,7 +256,6 @@ function blankDraft(id: string): DraftPatient {
     email: "",
     sample: false,
     notes: "",
-    files: [],
     surgeries: [],
     consults: [],
   };
@@ -317,10 +307,8 @@ export function csvToDrafts(csv: string): { drafts: DraftPatient[]; contacts: Co
       draft.sample = read("sample").trim().toLowerCase() === "yes";
     }
     const general = read("general_notes");
-    if (kind === "patient") {
-      draft.notes = general;
-      draft.files = unpackFiles(read("attachments"));
-    } else if (general && !draft.notes) draft.notes = general;
+    if (kind === "patient") draft.notes = general;
+    else if (general && !draft.notes) draft.notes = general;
     if (kind === "procedure") {
       draft.surgeries.push({
         id: read("record_id").trim() || crypto.randomUUID(),
@@ -336,6 +324,8 @@ export function csvToDrafts(csv: string): { drafts: DraftPatient[]; contacts: Co
       draft.consults.push({
         id: read("record_id").trim() || crypto.randomUUID(),
         date: read("date"),
+        doctor: read("surgeon"),
+        medicalCentre: read("hospital"),
         notes: read("notes"),
         files: unpackFiles(read("attachments")),
       });
@@ -382,7 +372,6 @@ async function materializeDraftsWithFiles(drafts: DraftPatient[], fileStore: Arc
   try {
     const patients: Patient[] = [];
     for (const draft of drafts) {
-      const attachments = await storePacked(draft.files, written, fileStore);
       const surgeries: Surgery[] = [];
       for (const surgery of draft.surgeries) {
         surgeries.push({
@@ -400,6 +389,8 @@ async function materializeDraftsWithFiles(drafts: DraftPatient[], fileStore: Arc
         consults.push({
           id: consult.id,
           date: consult.date,
+          doctor: consult.doctor,
+          medicalCentre: consult.medicalCentre,
           notes: consult.notes,
           attachments: await storePacked(consult.files, written, fileStore),
         });
@@ -413,7 +404,6 @@ async function materializeDraftsWithFiles(drafts: DraftPatient[], fileStore: Arc
         email: draft.email,
         sample: draft.sample,
         notes: draft.notes,
-        attachments,
         surgeries,
         consults,
       });

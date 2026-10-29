@@ -229,6 +229,7 @@
   margin-top: 0.7rem;
 }
 .tile-toggle {
+  position: relative;
   display: flex;
   width: 100%;
   align-items: center;
@@ -239,6 +240,33 @@
   color: inherit;
   font: inherit;
   text-align: left;
+}
+.tile-toggle.has-clip .tile-copy {
+  padding-right: 1.4rem;
+}
+.tile-clip {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.9rem;
+  display: inline-flex;
+  align-items: flex-start;
+  border: 0;
+  background: none;
+  color: var(--color-ink-muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  pointer-events: none;
+}
+.tile-clip svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+.tile-clip sup {
+  margin-top: -0.1rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1;
 }
 .tile-copy {
   display: grid;

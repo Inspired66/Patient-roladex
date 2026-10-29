@@ -156,3 +156,18 @@ export function getBlob(id: string) {
 export function deleteBlob(id: string) {
   return run("readwrite", (store) => store.delete(id)).then(() => undefined);
 }
+
+export function listBlobIds() {
+  return run<IDBValidKey[]>("readonly", (store) => store.getAllKeys()).then((keys) =>
+    keys.filter((key): key is string => typeof key === "string"),
+  );
+}
+
+export function orphanedBlobIds(stored: string[], referenced: Set<string>) {
+  return stored.filter((id) => !referenced.has(id));
+}
+
+export async function sweepOrphanBlobs(referenced: Set<string>) {
+  if (typeof indexedDB === "undefined") return;
+  for (const id of orphanedBlobIds(await listBlobIds(), referenced)) await deleteBlob(id);
+}

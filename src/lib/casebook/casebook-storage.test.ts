@@ -29,7 +29,6 @@ function patientWithFiles(): Patient {
     email: "casebook@example.test",
     notes: "Private patient notes",
     sample: false,
-    attachments: [{ id: "patient-file", name: "scan.pdf", mime: "application/pdf", size: 4 }],
     surgeries: [
       {
         id: "surgery-1",
@@ -45,6 +44,8 @@ function patientWithFiles(): Patient {
       {
         id: "consult-1",
         date: "2025-02-01",
+        doctor: "Dr Consultant",
+        medicalCentre: "Test Medical Centre",
         notes: "Consult notes",
         attachments: [{ id: "consult-file", name: "voice.mp3", mime: "audio/mpeg", size: 3 }],
       },
@@ -77,7 +78,6 @@ function memoryFileStore(
 test("encrypted archive restores patients, contacts, and every attachment on a clean store", async () => {
   const patient = patientWithFiles();
   const sourceFiles = memoryFileStore([
-    ["patient-file", new Blob(["PDF!"], { type: "application/pdf" })],
     ["surgery-file", new Blob(["JPG"], { type: "image/jpeg" })],
     ["consult-file", new Blob(["MP3"], { type: "audio/mpeg" })],
   ]);
@@ -114,13 +114,14 @@ test("encrypted archive restores patients, contacts, and every attachment on a c
   assert.equal(restoredPatients[0].name, patient.name);
   assert.equal(restoredPatients[0].surgeries[0].notes, "Surgery notes");
   assert.equal(restoredPatients[0].consults[0].notes, "Consult notes");
+  assert.equal(restoredPatients[0].consults[0].doctor, "Dr Consultant");
+  assert.equal(restoredPatients[0].consults[0].medicalCentre, "Test Medical Centre");
   assert.equal(drafts.contacts[0].name, contacts[0].name);
   const restoredAttachments = [
-    ...restoredPatients[0].attachments,
     ...restoredPatients[0].surgeries[0].attachments,
     ...restoredPatients[0].consults[0].attachments,
   ];
-  assert.equal(restoredAttachments.length, 3);
+  assert.equal(restoredAttachments.length, 2);
   assert.deepEqual(
     await Promise.all(
       restoredAttachments.map(async (attachment) => [
@@ -129,7 +130,6 @@ test("encrypted archive restores patients, contacts, and every attachment on a c
       ]),
     ),
     [
-      ["scan.pdf", "PDF!"],
       ["image.jpg", "JPG"],
       ["voice.mp3", "MP3"],
     ],
@@ -139,7 +139,6 @@ test("encrypted archive restores patients, contacts, and every attachment on a c
 test("interrupted restore leaves live metadata and existing attachment data untouched", async () => {
   const patient = patientWithFiles();
   const source = memoryFileStore([
-    ["patient-file", new Blob(["PDF!"], { type: "application/pdf" })],
     ["surgery-file", new Blob(["JPG"], { type: "image/jpeg" })],
     ["consult-file", new Blob(["MP3"], { type: "audio/mpeg" })],
   ]);

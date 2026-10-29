@@ -93,6 +93,11 @@ export function proceduresLabel(count: number) {
   return `${count} procedures`;
 }
 
+export function attachmentCountLabel(count: number) {
+  if (!Number.isInteger(count) || count <= 0) return "";
+  return count === 1 ? "1 attachment" : `${count} attachments`;
+}
+
 export function formatBytes(size: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
@@ -257,9 +262,9 @@ function fieldHaystack(patient: Patient, field: SearchField) {
                 : field === "procedure"
                   ? procedures.map((item) => item.type)
                   : field === "surgeon"
-                    ? procedures.map((item) => item.surgeon)
+                    ? [...procedures.map((item) => item.surgeon), ...consults.map((item) => item.doctor)]
                     : field === "hospital"
-                      ? procedures.map((item) => item.hospital)
+                      ? [...procedures.map((item) => item.hospital), ...consults.map((item) => item.medicalCentre)]
                       : field === "notes"
                         ? [patient.notes, ...procedures.map((item) => item.notes), ...consults.map((item) => item.notes)]
                         : [
@@ -281,7 +286,14 @@ function fieldHaystack(patient: Patient, field: SearchField) {
                               formatDob(item.date),
                               item.notes,
                             ]),
-                            ...consults.flatMap((item) => ["consult", item.date, formatDob(item.date), item.notes]),
+                            ...consults.flatMap((item) => [
+                              "consult",
+                              item.doctor,
+                              item.medicalCentre,
+                              item.date,
+                              formatDob(item.date),
+                              item.notes,
+                            ]),
                           ];
   return chunks.join(" ").toLowerCase();
 }
@@ -296,8 +308,12 @@ export function knownSurgeons(patients: Patient[]) {
   const seen = new Set<string>();
   const names: string[] = [];
   for (const patient of patients) {
-    for (const surgery of patient.surgeries) {
-      const name = surgery.surgeon.trim();
+    const entries = [
+      ...patient.surgeries.map((surgery) => surgery.surgeon),
+      ...(patient.consults ?? []).map((consult) => consult.doctor),
+    ];
+    for (const entry of entries) {
+      const name = entry.trim();
       const key = name.toLowerCase();
       if (!name || seen.has(key)) continue;
       seen.add(key);
@@ -311,8 +327,12 @@ export function knownHospitals(patients: Patient[]) {
   const seen = new Set<string>();
   const names: string[] = [];
   for (const patient of patients) {
-    for (const surgery of patient.surgeries) {
-      const name = surgery.hospital.trim();
+    const entries = [
+      ...patient.surgeries.map((surgery) => surgery.hospital),
+      ...(patient.consults ?? []).map((consult) => consult.medicalCentre),
+    ];
+    for (const entry of entries) {
+      const name = entry.trim();
       const key = name.toLowerCase();
       if (!name || seen.has(key)) continue;
       seen.add(key);

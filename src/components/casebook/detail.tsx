@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, FileText, X } from "lucide-react";
 import { AttachControls } from "@/components/casebook/attach";
+import { AttachmentCount } from "@/components/casebook/attachment-count";
 import { Confirm } from "@/components/casebook/forms";
 import { acceptFiles, deleteBlob, fileLimitLabel, getBlob, MAX_FILES, MAX_RECORDING_SECONDS, putBlob } from "@/lib/casebook/files";
 import { ageLabel, displayName, formatBytes, formatDob, patientTimeline, todayISO } from "@/lib/casebook/format";
@@ -418,6 +419,7 @@ export function PatientDetail({
                 patientId={patient.id}
                 consult={entry.consult}
                 onEdit={() => onEditConsult(entry.id)}
+                onOpenContact={onOpenContact}
               />
             ) : (
               <SurgeryBlock
@@ -452,19 +454,12 @@ export function PatientDetail({
 function GeneralNotes({ patient }: { patient: Patient }) {
   const patchPatient = useCasebook((state) => state.patchPatient);
   const [draft, setDraft] = useState(patient.notes);
-  const [error, setError] = useState("");
 
   useEffect(() => {
     if (draft === patient.notes) return;
     const timer = window.setTimeout(() => patchPatient(patient.id, { notes: draft }), 240);
     return () => window.clearTimeout(timer);
   }, [draft, patient.id, patient.notes, patchPatient]);
-
-  async function add(list: File[]) {
-    const result = await storeIncoming(patient.attachments, list);
-    if (result.attachments !== patient.attachments) patchPatient(patient.id, { attachments: result.attachments });
-    setError(result.error);
-  }
 
   return (
     <section className="slip note-block">
@@ -478,15 +473,6 @@ function GeneralNotes({ patient }: { patient: Patient }) {
         onChange={(event) => setDraft(event.target.value)}
         placeholder="Notes for this patient, even when there is no procedure"
       />
-      <p className="limit-note">{limitCopy()}</p>
-      <AttachControls disabled={patient.attachments.length >= MAX_FILES} onFiles={(list) => void add(list)} />
-      <FileList
-        files={patient.attachments}
-        onRemove={(id) =>
-          patchPatient(patient.id, { attachments: patient.attachments.filter((item) => item.id !== id) })
-        }
-      />
-      {error ? <p className="form-error">{error}</p> : null}
     </section>
   );
 }
@@ -495,10 +481,12 @@ function ConsultBlock({
   patientId,
   consult,
   onEdit,
+  onOpenContact,
 }: {
   patientId: string;
   consult: Consult;
   onEdit: () => void;
+  onOpenContact: (kind: ContactKind, name: string) => void;
 }) {
   const updateConsult = useCasebook((state) => state.updateConsult);
   const removeConsult = useCasebook((state) => state.removeConsult);
@@ -528,18 +516,42 @@ function ConsultBlock({
 
   return (
     <section className={open ? "slip tile is-open" : "slip tile"}>
-      <button type="button" className="tile-toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+      <button
+        type="button"
+        className={`tile-toggle${consult.attachments.length ? " has-clip" : ""}`}
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
         <span className="tile-copy">
           <span className="slip-date">{formatDob(consult.date) || "No date"}</span>
           <span className="slip-type">Consult</span>
+          {consult.doctor || consult.medicalCentre ? (
+            <span className="slip-who">{[consult.doctor, consult.medicalCentre].filter(Boolean).join(" · ")}</span>
+          ) : null}
         </span>
+        <AttachmentCount count={consult.attachments.length} />
         <ChevronDown className="tile-chevron" aria-hidden />
       </button>
       {open ? (
         <div className="tile-body">
+          {consult.doctor || consult.medicalCentre ? (
+            <p className="slip-who">
+              {consult.doctor ? (
+                <button type="button" className="name-link" onClick={() => onOpenContact("surgeon", consult.doctor)}>
+                  {consult.doctor}
+                </button>
+              ) : null}
+              {consult.doctor && consult.medicalCentre ? <span aria-hidden> · </span> : null}
+              {consult.medicalCentre ? (
+                <button type="button" className="name-link" onClick={() => onOpenContact("hospital", consult.medicalCentre)}>
+                  {consult.medicalCentre}
+                </button>
+              ) : null}
+            </p>
+          ) : null}
           <div className="action-row">
             <button type="button" className="btn-text" onClick={onEdit}>
-              Edit date
+              Edit details
             </button>
             <button type="button" className="btn-text danger" onClick={() => setConfirm(true)}>
               Remove
@@ -624,7 +636,12 @@ function SurgeryBlock({
 
   return (
     <section className={`slip tile${open ? " is-open" : ""}${upcoming ? " is-soon" : ""}`}>
-      <button type="button" className="tile-toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+      <button
+        type="button"
+        className={`tile-toggle${surgery.attachments.length ? " has-clip" : ""}`}
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
         <span className="tile-copy">
           <span className="slip-date">
             {upcoming ? "Upcoming · " : ""}
@@ -636,6 +653,7 @@ function SurgeryBlock({
             {surgery.hospital ? ` · ${surgery.hospital}` : ""}
           </span>
         </span>
+        <AttachmentCount count={surgery.attachments.length} />
         <ChevronDown className="tile-chevron" aria-hidden />
       </button>
       {open ? (
@@ -742,11 +760,6 @@ function AttachmentRow({ file, onRemove }: { file: Attachment; onRemove: () => v
           <p>{file.name}</p>
           <span>{formatBytes(file.size)}</span>
         </div>
-        {url ? (
-          <a className="btn-text" href={url} download={file.name}>
-            Save
-          </a>
-        ) : null}
         <button type="button" className="btn-text danger" onClick={onRemove}>
           Remove
         </button>

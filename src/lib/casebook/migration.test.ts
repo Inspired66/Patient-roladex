@@ -18,9 +18,15 @@ test("migration backup encrypts and verifies casebook data and attachments", asy
           email: "legacy@example.test",
           notes: "Private notes",
           sample: false,
-          attachments: [{ id: "legacy-file", name: "scan.pdf", mime: "application/pdf", size: 4 }],
           surgeries: [],
-          consults: [],
+          consults: [
+            {
+              id: "legacy-consult",
+              date: "2025-02-01",
+              notes: "",
+              attachments: [{ id: "legacy-file", name: "scan.pdf", mime: "application/pdf", size: 4 }],
+            },
+          ],
         },
       ],
       contacts: [
@@ -68,7 +74,14 @@ test("migration backup fails closed when any legacy attachment is missing", asyn
           id: "legacy-patient",
           name: "Legacy Patient",
           surgeries: [],
-          attachments: [{ id: "missing", name: "scan.pdf", mime: "application/pdf", size: 4 }],
+          consults: [
+            {
+              id: "c",
+              date: "2025-02-01",
+              notes: "",
+              attachments: [{ id: "missing", name: "scan.pdf", mime: "application/pdf", size: 4 }],
+            },
+          ],
         },
       ],
     },

@@ -45,7 +45,6 @@ function decodeBase64(value: string) {
 
 function attachmentList(patients: ReturnType<typeof migrateStoredCasebook>["patients"]) {
   return patients.flatMap((patient) => [
-    ...patient.attachments,
     ...patient.surgeries.flatMap((surgery) => surgery.attachments),
     ...patient.consults.flatMap((consult) => consult.attachments),
   ]);
@@ -248,7 +247,6 @@ export function MigrationPage({ mode, port }: { mode: "source" | "restore"; port
           `${parsed.contacts.length} contacts, and ${parsed.drafts.reduce(
             (sum, patient) =>
               sum +
-              patient.files.length +
               patient.surgeries.reduce((subtotal, surgery) => subtotal + surgery.files.length, 0) +
               patient.consults.reduce((subtotal, consult) => subtotal + consult.files.length, 0),
             0,
