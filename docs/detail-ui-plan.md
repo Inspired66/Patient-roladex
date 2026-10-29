@@ -83,7 +83,7 @@ Why: base64 (+33%) and a single JS string capped at 536,870,888 chars (V8 `MAX_S
 
 ## 2. Approach per item
 
-Batch order requested: **2, 3, 4, 5 → 1 → 6 → 7**. Each batch ends with typecheck, lint, `npm test` (and `android/build-apk.sh` for batches 6 and 7), one commit, and a stop for approval.
+Batch order (revised, section 0): **1 (items 2, 3, 4, 5) → 1b (7A) → 2 (item 1) → 3 (item 6) → 4 (item 7 + 7B)**. Each batch ends with typecheck, lint, `npm test` (and `android/build-apk.sh` for batches 3 and 4), one commit, and a stop for approval.
 
 ### Item 2: Consult Doctor and Medical centre (effort **M**)
 - `types.ts`: add `doctor: string` and `medicalCentre: string` to `Consult`/`ConsultInput` (default `""`, both optional in the UI).
@@ -228,7 +228,7 @@ Why: section 1.8 measured the current single archive failing at about 13 patient
 | R2 | New bridge actions (`armAttachPicker`, `releaseCapture`, possibly view-file) widen the bridge. | Allow-list, trusted-page check, id ≤ 96, field validation, fixed error text, one-shot, tests for wrong origin/malformed/oversized. |
 | R3 | PDF/text "tap to open" has no safe in-WebView renderer. | Open question 3; native view handoff via a transient, non-exported FileProvider path with chunked copy and delete after use. |
 | R4 | `ACTION_PICK_IMAGES` / `OPEN_DOCUMENT` behave differently across OEM/API levels; cannot test all devices. | API gating plus fallbacks; Robolectric-free manual checklist; `./android/build-apk.sh` build gate. |
-| R5 | Archive v2 is a new crypto container. | Standard AES-GCM framing with authenticated header/counter, tamper tests, keep v1 reader; security review before merge. |
+| R5 | 7B adds a new per-file crypto container, a folder grant and new bridge actions that touch shared storage. | Same primitives as `VELLUM1`, key derived once, authenticated header/frame counter/footer hash, tamper and wrong-password tests; folder access confined to the chosen tree, opaque refs, grant revocable; security review before merge. |
 | R6 | 30 MB × many patients makes the live IndexedDB large; no at-rest encryption (existing open finding 2). | Out of scope; meter and error make growth visible. |
 | R7 | Removing per-file limits removes an OOM guard in places that still hold whole files (e.g. thumbnails via blob URL, `AttachmentRow` loads every blob on render). | Lazy-load blob URLs only when a row is visible/opened; thumbnails only for images ≤ a size threshold. |
 | R8 | Camera needs runtime `CAMERA` permission because it is declared in the manifest. | Request at point of use via existing `requestCamera`; denial shows a message and leaves the menu usable. |
