@@ -78,6 +78,20 @@ class WebAssetCheckTest(unittest.TestCase):
         self.assertNotIn("addJavascriptInterface", source)
         self.assertNotIn("@JavascriptInterface", source)
 
+    def test_restore_picker_is_separate_and_attachment_rules_remain_strict(self) -> None:
+        source = (Path(__file__).parent / "src/com/vellum/casebook/MainActivity.java").read_text(encoding="utf-8")
+        self.assertIn('case "armRestorePicker":', source)
+        self.assertIn('case "armRestorePicker":\n      case "readList":', source)
+        self.assertIn("NativeRestorePickerPolicy.isValidPayload", source)
+        self.assertIn("restorePickerArm.consume(SystemClock.elapsedRealtime())", source)
+        self.assertIn("new Intent(Intent.ACTION_OPEN_DOCUMENT)", source)
+        self.assertIn("NativeRestorePickerPolicy.isAllowedFile", source)
+        self.assertIn("Intent.FLAG_GRANT_READ_URI_PERMISSION", source)
+        restore_chooser = source.split("private void launchRestoreChooser()", 1)[1].split("\n  private ", 1)[0]
+        self.assertNotIn("Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION", restore_chooser)
+        self.assertIn("Choose an image, audio recording, PDF, or plain-text file.", source)
+        self.assertIn("NativeAttachmentPolicy.isAllowedType(mime, name)", source)
+
     def test_android_build_uses_pinned_webkit_and_scans_packaged_assets(self) -> None:
         build = Path(__file__).with_name("build-apk.sh").read_text(encoding="utf-8")
         self.assertIn("export VITE_GROK_EXTENSIONS=0", build)

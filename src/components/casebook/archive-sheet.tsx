@@ -12,6 +12,7 @@ import {
   type OpenedBackup,
 } from "@/lib/casebook/restore-flow";
 import { todayISO } from "@/lib/casebook/format";
+import { openRestorePicker } from "@/lib/casebook/restore-picker";
 import { useCasebook } from "@/lib/casebook/store";
 import type { Patient } from "@/lib/casebook/types";
 
@@ -112,6 +113,15 @@ export function ArchiveSheet({
     }
   }
 
+  async function chooseRestoreFile() {
+    setError("");
+    try {
+      await openRestorePicker(fileRef.current);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Could not open the restore file picker.");
+    }
+  }
+
   async function unlock(event: React.FormEvent) {
     event.preventDefault();
     if (!locked || busy) return;
@@ -167,7 +177,7 @@ export function ArchiveSheet({
           type="button"
           className="btn-ink"
           disabled={busy}
-          onClick={() => fileRef.current?.click()}
+          onClick={() => void chooseRestoreFile()}
         >
           Restore from backup
         </button>

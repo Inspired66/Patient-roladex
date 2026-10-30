@@ -1,5 +1,9 @@
 # Offline patient-list OCR and extraction
 
+## Restore file picker
+
+The Archive restore action explicitly arms a one-shot native picker for the trusted casebook page. Android opens `ACTION_OPEN_DOCUMENT` with a broad MIME type because `.vellum` has no standard MIME type; the native restore policy then accepts only `.vellum` or `.csv` filenames, a verified nonzero size, and files no larger than 64 MiB (the existing native save limit). It does not persist URI access. Attachment selection continues to use `NativeAttachmentPolicy` and its existing type, size, and count limits.
+
 The Android wrapper continues to use the bundled Google ML Kit Latin recognizer for photos and rendered PDF pages. `ListOcr.readDocument` adapts ML Kit's page, line, element, and bounding-box output into `OcrDocument`; its existing `read` method remains available and returns the same joined OCR text. The recognizer, PDF renderer, page bitmaps, and file descriptor are closed after processing. PDFs are still capped at six pages, with a review warning when more pages exist.
 
 `MainActivity` runs OCR and extraction on its existing background worker. `OfflinePatientFieldExtractor` groups rows from OCR coordinates (normalised to each page's width), detects variable header labels and column orders, then associates cell values with the nearest header. It can reuse a table's headings on a following page when that page omits the header. Explicitly labelled, non-table rows are a limited fallback; an unknown layout produces warnings rather than a guessed patient.

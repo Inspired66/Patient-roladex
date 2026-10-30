@@ -21,6 +21,8 @@
 > | 13 | Partial schema versioning | **PARTLY SUPERSEDED**: casebook envelope has a version (1) with `migrateStoredCasebook` that rejects newer versions; IndexedDB schema is v2; migration tests exist; no multi-step migration history yet |
 > | 14 | Bundle size | **STILL OPEN** (current `artifacts/Vellum.apk` is 17,277,518 bytes) |
 
+**Restore picker correction:** The Archive restore input uses a trusted-page, one-shot native picker arm and a separate `ACTION_OPEN_DOCUMENT` path. Native restore validation allows only `.vellum` and `.csv` names with a verified nonzero size up to 64 MiB; attachment validation remains governed by `NativeAttachmentPolicy`. No URI permission is persisted.
+
 ## Architecture map
 
 > **SUPERSEDED diagram.** The diagram below shows the earlier design (loopback `AssetServer` page origin, remote script). The current design is the next diagram.

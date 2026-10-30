@@ -71,8 +71,9 @@ public class MainActivity extends Activity {
   private static final int SAVE_REQ = 1003;
   private static final int PICK_REQ = 1005;
   private static final int LIST_REQ = 1006;
+  private static final int RESTORE_FILE_REQ = 1007;
   private static final int MAX_SAVE_CHUNK_BYTES = 48 * 1024;
-  private static final long MAX_SAVE_BYTES = 64L * 1024L * 1024L;
+  private static final long MAX_SAVE_BYTES = NativeRestorePickerPolicy.MAX_FILE_BYTES;
   private static final long MAX_MIGRATION_ARCHIVE_BYTES = 512L * 1024L * 1024L;
   private static final int MAX_MIGRATION_CHUNK_BYTES = 48 * 1024;
   private static final String ASSET_HOST = "appassets.androidplatform.net";
@@ -107,6 +108,7 @@ public class MainActivity extends Activity {
   private OutputStream saveBuffer;
   private final Object saveLock = new Object();
   private final Set<String> pickerUris = Collections.synchronizedSet(new HashSet<>());
+  private final NativeRestorePickerPolicy.Arm restorePickerArm = new NativeRestorePickerPolicy.Arm();
   private String saveName = "vellum.csv";
   private String saveMime = "application/octet-stream";
   private final Map<String, JavaScriptReplyProxy> pendingReplies = new HashMap<>();
@@ -198,7 +200,8 @@ public class MainActivity extends Activity {
         if (upload != null) upload.onReceiveValue(null);
         upload = callback;
         try {
-          launchNativeChooser();
+          if (restorePickerArm.consume(SystemClock.elapsedRealtime())) launchRestoreChooser();
+          else launchNativeChooser();
         } catch (Exception error) {
           finishUpload(null);
         }
@@ -355,6 +358,9 @@ public class MainActivity extends Activity {
         case "requestCamera":
           requestCamera(id);
           break;
+        case "armRestorePicker":
+          armRestorePicker(id, payload);
+          break;
         case "readList":
           readList(id);
           break;
@@ -442,6 +448,7 @@ public class MainActivity extends Activity {
       case "beginMicrophoneCapture":
       case "endMicrophoneCapture":
       case "requestCamera":
+      case "armRestorePicker":
       case "readList":
       case "beginSave":
       case "writeChunk":
@@ -470,6 +477,28 @@ public class MainActivity extends Activity {
       // The fixed fields and scalar values are always encodable.
     }
     return result;
+  }
+
+  private void armRestorePicker(String requestId, JSONObject payload) {
+    if (!NativeRestorePickerPolicy.isValidPayload(
+        payload == null ? 0 : payload.length(),
+        payload != null && payload.has("purpose"),
+        payload == null ? null : payload.opt("purpose"))) {
+      sendNativeError(requestId, "That restore picker request is invalid.");
+      return;
+    }
+    Uri page = Uri.parse(webView.getUrl());
+    String purpose = payload.optString("purpose", null);
+    if (!restorePickerArm.arm(
+        purpose,
+        page.getScheme(),
+        page.getHost(),
+        page.getPort(),
+        SystemClock.elapsedRealtime())) {
+      sendNativeError(requestId, "That restore picker request is invalid or already active.");
+      return;
+    }
+    sendNativeResult(requestId, statusResult("armed", true));
   }
 
   private void beginMicrophoneCapture(String requestId) {
@@ -1000,6 +1029,19 @@ public class MainActivity extends Activity {
       plain.setType("*/*");
       plain.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
       startActivityForResult(plain, FILE_REQ);
+    }
+  }
+
+  private void launchRestoreChooser() {
+    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+    intent.addCategory(Intent.CATEGORY_OPENABLE);
+    intent.setType("*/*");
+    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+    try {
+      startActivityForResult(intent, RESTORE_FILE_REQ);
+    } catch (ActivityNotFoundException error) {
+      showAttachmentError("This phone has no app that can open a backup file.");
+      finishUpload(null);
     }
   }
 
@@ -1682,6 +1724,34 @@ public class MainActivity extends Activity {
   @Override
   protected void onActivityResult(int requestCode, int resultCode, Intent data) {
     super.onActivityResult(requestCode, resultCode, data);
+    if (requestCode == RESTORE_FILE_REQ) {
+      Uri selected = resultCode == RESULT_OK && data != null ? data.getData() : null;
+      String name = displayName(selected, "");
+      long size = contentSize(selected);
+      if (selected == null) {
+        finishUpload(null);
+      } else if (!NativeRestorePickerPolicy.isAllowedExtension(name)) {
+        showAttachmentError("Choose a .vellum or .csv backup file.");
+        finishUpload(null);
+      } else if (size == 0) {
+        showAttachmentError("That backup file is empty.");
+        finishUpload(null);
+      } else if (size < 0) {
+        showAttachmentError("The backup file size could not be verified.");
+        finishUpload(null);
+      } else if (size > NativeRestorePickerPolicy.MAX_FILE_BYTES) {
+        showAttachmentError("Backup files must be 64 MB or smaller.");
+        finishUpload(null);
+      } else if (!NativeRestorePickerPolicy.isAllowedFile(
+          NativeRestorePickerPolicy.PURPOSE, name, size)) {
+        showAttachmentError("That backup file could not be opened.");
+        finishUpload(null);
+      } else {
+        pickerUris.add(selected.toString());
+        finishUpload(new Uri[] {selected});
+      }
+      return;
+    }
     if (requestCode == LIST_REQ) {
       if (resultCode == RESULT_OK && data != null && data.getData() != null) readListUri(data.getData());
       else signalList(false, "", "");
@@ -1860,6 +1930,7 @@ public class MainActivity extends Activity {
 
   @Override
   protected void onPause() {
+    restorePickerArm.clear();
     micCaptureArmed = false;
     micCaptureActive = false;
     micCaptureArmExpiresAt = 0;
@@ -1878,6 +1949,7 @@ public class MainActivity extends Activity {
 
   @Override
   protected void onDestroy() {
+    restorePickerArm.clear();
     clearMicrophoneCapture();
     if (server != null) server.stop();
     if (migrationServer != null) migrationServer.stop();
