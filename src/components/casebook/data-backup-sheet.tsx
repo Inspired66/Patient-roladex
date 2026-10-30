@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Sheet } from "@/components/casebook/forms";
+import { PASSWORD_INPUT_PROPS, PasswordNote } from "@/components/casebook/password-input";
 import { saveBlob } from "@/lib/casebook/archive";
 import {
   checkBackupPassword,
@@ -92,6 +93,7 @@ export function DataBackupSheet({ onClose }: { onClose: () => void }) {
             className="field"
             type={type}
             autoComplete="new-password"
+            {...PASSWORD_INPUT_PROPS}
             value={password}
             disabled={busy}
             onChange={(event) => setPassword(event.target.value)}
@@ -103,11 +105,13 @@ export function DataBackupSheet({ onClose }: { onClose: () => void }) {
             className="field"
             type={type}
             autoComplete="new-password"
+            {...PASSWORD_INPUT_PROPS}
             value={repeat}
             disabled={busy}
             onChange={(event) => setRepeat(event.target.value)}
           />
         </label>
+        <PasswordNote />
         <button
           type="button"
           className="btn-text"

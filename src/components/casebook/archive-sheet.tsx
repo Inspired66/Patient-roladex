@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { DataBackupSheet } from "@/components/casebook/data-backup-sheet";
 import { Confirm, Sheet } from "@/components/casebook/forms";
+import { PASSWORD_INPUT_PROPS, PasswordNote } from "@/components/casebook/password-input";
 import { encryptArchive, patientsToCsv, saveBlob } from "@/lib/casebook/archive";
 import {
   classifyBackupFile,
@@ -199,6 +200,7 @@ export function ArchiveSheet({
                 className="field"
                 type={showUnlock ? "text" : "password"}
                 autoComplete="current-password"
+                {...PASSWORD_INPUT_PROPS}
                 value={unlockPassword}
                 onChange={(event) => setUnlockPassword(event.target.value)}
                 autoFocus
@@ -292,6 +294,7 @@ export function ArchiveSheet({
               className="field"
               type="password"
               autoComplete="new-password"
+              {...PASSWORD_INPUT_PROPS}
               value={password}
               onChange={(event) => setPassword(event.target.value)}
             />
@@ -302,10 +305,12 @@ export function ArchiveSheet({
               className="field"
               type="password"
               autoComplete="new-password"
+              {...PASSWORD_INPUT_PROPS}
               value={repeat}
               onChange={(event) => setRepeat(event.target.value)}
             />
           </label>
+          <PasswordNote />
           <button type="submit" className="btn-ghost" disabled={busy || chosen.length === 0}>
             Download encrypted file (with attachments)
           </button>

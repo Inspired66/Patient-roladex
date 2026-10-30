@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Confirm } from "@/components/casebook/forms";
+import { PASSWORD_INPUT_PROPS, PasswordNote } from "@/components/casebook/password-input";
 import {
   csvToDrafts,
   decryptArchive,
@@ -357,6 +358,7 @@ export function MigrationPage({ mode, port }: { mode: "source" | "restore"; port
                 className="field"
                 type="password"
                 autoComplete="new-password"
+                {...PASSWORD_INPUT_PROPS}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 disabled={busy}
@@ -368,11 +370,13 @@ export function MigrationPage({ mode, port }: { mode: "source" | "restore"; port
                 className="field"
                 type="password"
                 autoComplete="new-password"
+                {...PASSWORD_INPUT_PROPS}
                 value={repeat}
                 onChange={(event) => setRepeat(event.target.value)}
                 disabled={busy}
               />
             </label>
+            <PasswordNote />
             <button type="submit" className="btn-ink" disabled={busy}>
               {busy ? "Verifying encrypted backup…" : "Create verified backup"}
             </button>
@@ -395,11 +399,13 @@ export function MigrationPage({ mode, port }: { mode: "source" | "restore"; port
                   className="field"
                   type="password"
                   autoComplete="current-password"
+                  {...PASSWORD_INPUT_PROPS}
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
                   disabled={busy}
                 />
               </label>
+              <PasswordNote />
               <button type="submit" className="btn-ink" disabled={busy || !password}>
                 {busy ? "Verifying backup…" : "Verify encrypted backup"}
               </button>
