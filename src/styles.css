@@ -1393,3 +1393,63 @@ a.card-contact span {
     animation: none !important;
   }
 }
+
+.notes-tile .tile-toggle {
+  min-height: 3rem;
+}
+.notes-preview {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow-wrap: anywhere;
+}
+.notes-files {
+  margin-top: 0.9rem;
+}
+.notes-files .file-open {
+  display: flex;
+  width: 100%;
+  min-height: 3rem;
+  align-items: center;
+  gap: 0.65rem;
+  border: 0;
+  background: transparent;
+  padding: 0.2rem 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.notes-files .file-name {
+  display: block;
+  min-width: 0;
+  flex: 1;
+}
+.notes-files .file-name span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notes-files .file-name p {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notes-files .file-name span {
+  color: var(--color-ink-muted);
+  font-size: 0.75rem;
+}
+.notes-tile .tile-copy .slip-date,
+.notes-tile .tile-copy .slip-who {
+  text-transform: none;
+  letter-spacing: 0.02em;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+.notes-files .file-name span {
+  white-space: normal;
+}

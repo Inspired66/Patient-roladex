@@ -194,8 +194,8 @@ test("the paperclip count is decorative, muted, and part of the button label", (
   assert.equal((detail.match(/<AttachmentCount count=/g) ?? []).length, 2);
 });
 
-test("General notes no longer offers patient-level attachments", () => {
+test("General notes has a read-only list: no patient-level attachments, add or remove", () => {
   const notes = /function GeneralNotes[\s\S]*?\n}\n/.exec(detail)?.[0] ?? "";
   assert.ok(notes.length > 0);
-  assert.doesNotMatch(notes, /AttachControls|FileList|attachments/);
+  assert.doesNotMatch(notes, /AttachControls|FileList|patient\.attachments|onRemove|Remove/);
 });

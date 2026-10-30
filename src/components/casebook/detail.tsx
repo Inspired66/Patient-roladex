@@ -1,10 +1,16 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, FileText, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, File, FileText, Image as ImageIcon, Music, X } from "lucide-react";
 import { AttachControls } from "@/components/casebook/attach";
 import { AttachmentCount } from "@/components/casebook/attachment-count";
 import { Confirm } from "@/components/casebook/forms";
 import { acceptFiles, deleteBlob, fileLimitLabel, getBlob, MAX_FILES, MAX_RECORDING_SECONDS, putBlob } from "@/lib/casebook/files";
 import { ageLabel, attachmentDetail, displayName, formatBytes, formatDob, patientTimeline, todayISO } from "@/lib/casebook/format";
+import {
+  attachmentRowModel,
+  notesButtonModel,
+  patientAttachmentList,
+  type AttachmentRowModel,
+} from "@/lib/casebook/detail-data";
 import { useBackLayer } from "@/lib/casebook/back";
 import { useCasebook } from "@/lib/casebook/store";
 import type { Attachment, Consult, ContactKind, FlyOrigin, Patient, Surgery } from "@/lib/casebook/types";
@@ -455,6 +461,9 @@ export function PatientDetail({
 function GeneralNotes({ patient }: { patient: Patient }) {
   const patchPatient = useCasebook((state) => state.patchPatient);
   const [draft, setDraft] = useState(patient.notes);
+  const [open, setOpen] = useState(false);
+  const model = notesButtonModel(patient.notes, patient.notesModifiedAt);
+  const files = patientAttachmentList(patient);
 
   useEffect(() => {
     if (draft === patient.notes) return;
@@ -463,18 +472,128 @@ function GeneralNotes({ patient }: { patient: Patient }) {
   }, [draft, patient.id, patient.notes, patchPatient]);
 
   return (
-    <section className="slip note-block">
-      <label className="lbl" htmlFor={`general-${patient.id}`}>
-        General notes
-      </label>
-      <textarea
-        id={`general-${patient.id}`}
-        className="area"
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        placeholder="Notes for this patient, even when there is no procedure"
-      />
-    </section>
+    <>
+      <div className="section-head">
+        <h3>General notes</h3>
+      </div>
+      <section className={open ? "slip tile notes-tile is-open" : "slip tile notes-tile"}>
+        <button
+          type="button"
+          className="tile-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          <span className="sr-only">General notes. </span>
+          <span className="tile-copy">
+            {model.empty ? (
+              <span className="slip-who">{model.emptyLine}</span>
+            ) : (
+              <>
+                {model.dateLine ? <span className="slip-date">{model.dateLine}</span> : null}
+                <span className="notes-preview">{model.preview}</span>
+              </>
+            )}
+          </span>
+          <ChevronDown className="tile-chevron" aria-hidden />
+        </button>
+        {open ? (
+          <div className="tile-body">
+            <label className="lbl" htmlFor={`general-${patient.id}`}>
+              Note
+            </label>
+            <textarea
+              id={`general-${patient.id}`}
+              className="area"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder="Notes for this patient, even when there is no procedure"
+            />
+          </div>
+        ) : null}
+      </section>
+      <div className="notes-files">
+        <p className="lbl">Attachments{files.length ? ` (${files.length})` : ""}</p>
+        {files.length === 0 ? <p className="slip-who">No attachments yet.</p> : null}
+        {files.map((entry) => (
+          <AttachmentListRow key={entry.file.id} model={attachmentRowModel(entry)} />
+        ))}
+      </div>
+    </>
+  );
+}
+
+const KIND_ICON = { image: ImageIcon, audio: Music, pdf: FileText, text: FileText, other: File } as const;
+
+function AttachmentListRow({ model }: { model: AttachmentRowModel }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [shown, setShown] = useState(false);
+  const [notice, setNotice] = useState("");
+  const Icon = KIND_ICON[model.kind];
+
+  useEffect(
+    () => () => {
+      if (url) URL.revokeObjectURL(url);
+    },
+    [url],
+  );
+
+  async function activate() {
+    if (model.action === "message") {
+      setNotice((value) => (value ? "" : model.message));
+      return;
+    }
+    if (shown && model.action === "audio") {
+      setShown(false);
+      return;
+    }
+    setNotice("");
+    try {
+      let next = url;
+      if (!next) {
+        const blob = await getBlob(model.id);
+        if (!blob) {
+          setNotice("This file could not be found on this phone.");
+          return;
+        }
+        next = URL.createObjectURL(blob);
+        setUrl(next);
+      }
+      setShown(true);
+    } catch {
+      setNotice("This file could not be opened.");
+    }
+  }
+
+  return (
+    <div className="file-block">
+      <button
+        type="button"
+        className="file-open"
+        aria-label={model.ariaLabel}
+        aria-expanded={model.action === "audio" ? shown : undefined}
+        onClick={() => void activate()}
+      >
+        <span className="file-icon" aria-hidden>
+          <Icon />
+        </span>
+        <span className="file-name">
+          <p>{model.name}</p>
+          <span>{[model.missing ? "Not restored" : "", model.sizeLabel, model.addedLabel].filter(Boolean).join(" · ")}</span>
+          <span>{model.ownerLabel}</span>
+        </span>
+      </button>
+      {notice ? (
+        <p className="slip-who" role="status">
+          {notice}
+        </p>
+      ) : null}
+      {shown && url && model.action === "audio" ? <audio className="file-audio" controls src={url} preload="none" /> : null}
+      {shown && url && model.action === "image" ? (
+        <div className="lightbox" onClick={() => setShown(false)} role="presentation">
+          <img src={url} alt={model.name} />
+        </div>
+      ) : null}
+    </div>
   );
 }
 

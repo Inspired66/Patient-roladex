@@ -461,3 +461,151 @@ test("schema 4: bad values are dropped, valid ones kept, v3 loads, v5 is refused
   assert.equal(v3.notes, "Stiff knee");
   assert.throws(() => migrateStoredCasebook(raw(5, base)), /newer version/);
 });
+
+// --- chunk 2b: button text and row model ---
+
+import {
+  attachmentKind,
+  attachmentRowModel,
+  notesButtonModel,
+  NOT_RESTORED_MESSAGE,
+} from "./detail-data.ts";
+
+test("notes button: dated note shows the date line and a preview with no dash", () => {
+  const local = new Date(2026, 9, 26, 12).toISOString();
+  const m = notesButtonModel("History of difficult intubation,\nasthma.", local);
+  assert.equal(m.dateLine, "26 OCT 2026 (last modified)");
+  assert.equal(m.preview, "History of difficult intubation, asthma.");
+  assert.equal(m.empty, false);
+  assert.doesNotMatch(m.preview, /^[-•–—*]/);
+});
+
+test("notes button: undated note has no date line and no invented date", () => {
+  const m = notesButtonModel("Old note", undefined);
+  assert.equal(m.dateLine, "");
+  assert.equal(m.preview, "Old note");
+  assert.equal(notesButtonModel("Old note", "garbage").dateLine, "");
+});
+
+test("notes button: empty or whitespace-only notes show the empty line", () => {
+  for (const text of ["", " \n\t "]) {
+    const m = notesButtonModel(text, NOTE_TIME);
+    assert.equal(m.empty, true);
+    assert.equal(m.preview, "");
+    assert.equal(m.dateLine, "");
+    assert.equal(m.emptyLine, "No notes yet. Tap to add.");
+  }
+});
+
+test("notes button: very long notes pass only about 300 characters to the DOM", () => {
+  const m = notesButtonModel("word ".repeat(100_000), NOTE_TIME);
+  assert.ok(m.preview.length <= 300 && m.preview.length > 250);
+  const emoji = notesButtonModel("😀".repeat(1000), undefined);
+  assert.doesNotMatch(emoji.preview, /[\ud800-\udbff]$/);
+});
+
+test("a bare calendar date is shown as that local day, not shifted", () => {
+  assert.equal(formatNotesDate("2026-01-10"), "10 JAN 2026");
+});
+
+test("row model: icon kind, labels and actions by file type", () => {
+  const entry = (name: string, mime: string, extra: object = {}) => ({
+    file: { id: name, name, mime, size: 2048, ...extra },
+    ownerKind: "procedure" as const,
+    ownerId: "s",
+    ownerLabel: "Knee",
+    ownerDate: "2026-01-10",
+    addedAt: "2026-02-01T12:00:00.000Z",
+    missing: Boolean((extra as { notRestored?: unknown }).notRestored),
+  });
+  const img = attachmentRowModel(entry("a.jpg", "image/jpeg"));
+  assert.deepEqual(
+    [img.kind, img.action, img.sizeLabel, img.ownerLabel],
+    ["image", "image", "2 KB", "Knee"],
+  );
+  assert.equal(img.addedLabel, "Added 1 FEB 2026");
+  assert.equal(attachmentRowModel(entry("v.m4a", "")).action, "audio");
+  const pdf = attachmentRowModel(entry("r.pdf", "application/pdf"));
+  assert.deepEqual([pdf.kind, pdf.action], ["pdf", "message"]);
+  assert.match(pdf.message, /PDF/);
+  assert.equal(attachmentRowModel(entry("n.txt", "text/plain")).kind, "text");
+  assert.equal(attachmentKind({ name: "x.bin", mime: "application/octet-stream" }), "other");
+  assert.match(
+    attachmentRowModel(entry("x.bin", "application/octet-stream")).message,
+    /cannot be opened/,
+  );
+});
+
+test("row model: Not restored files never try to open and carry the shared message", () => {
+  const m = attachmentRowModel({
+    file: {
+      id: "f",
+      name: "scan.jpg",
+      mime: "image/jpeg",
+      size: 11,
+      notRestored: { sha256: "a".repeat(64), addedAt: "2026-03-01" },
+    },
+    ownerKind: "consult",
+    ownerId: "c",
+    ownerLabel: "Consult Dr Solo",
+    ownerDate: "2026-01-01",
+    addedAt: "2026-03-01",
+    missing: true,
+  });
+  assert.equal(m.action, "message");
+  assert.equal(m.message, NOT_RESTORED_MESSAGE);
+  assert.equal(m.addedLabel, "Added 1 MAR 2026");
+  assert.match(m.ariaLabel, /Not restored/);
+});
+
+test("row model: no valid date gives no Added label; list order comes from the helper", () => {
+  const p = patient({
+    surgeries: [],
+    consults: [
+      {
+        id: "c-1",
+        date: "",
+        doctor: "",
+        medicalCentre: "",
+        notes: "",
+        attachments: [{ id: "u", name: "u.pdf", mime: "application/pdf", size: 1 }],
+      },
+      {
+        id: "c-2",
+        date: "2026-05-01",
+        doctor: "Dr Solo",
+        medicalCentre: "",
+        notes: "",
+        attachments: [{ id: "k", name: "k.pdf", mime: "application/pdf", size: 1 }],
+      },
+    ],
+  });
+  const rows = patientAttachmentList(p).map(attachmentRowModel);
+  assert.deepEqual(
+    rows.map((r) => r.id),
+    ["k", "u"],
+  );
+  assert.equal(rows[1].addedLabel, "");
+  assert.equal(rows[1].ownerLabel, "Consult");
+  assert.equal(rows[0].ownerLabel, "Consult Dr Solo");
+});
+
+test("opening, closing and viewing do not change notesModifiedAt", () => {
+  stubStorage();
+  try {
+    useCasebook.setState({ patients: [patient()] });
+    const before = useCasebook.getState().patients[0];
+    notesButtonModel(before.notes, before.notesModifiedAt);
+    patientAttachmentList(before).map(attachmentRowModel);
+    // the editor only saves when the draft differs; an unchanged draft sends no patch
+    assert.equal(useCasebook.getState().patients[0].notesModifiedAt, NOTE_TIME);
+    useCasebook.getState().patchPatient("p-1", { notes: before.notes });
+    assert.equal(useCasebook.getState().patients[0].notesModifiedAt, NOTE_TIME);
+    useCasebook.getState().patchPatient("p-1", { notes: "Edited" });
+    const edited = useCasebook.getState().patients[0];
+    assert.notEqual(edited.notesModifiedAt, NOTE_TIME);
+    assert.equal(notesButtonModel(edited.notes, edited.notesModifiedAt).preview, "Edited");
+  } finally {
+    Reflect.deleteProperty(globalThis, "localStorage");
+  }
+});
