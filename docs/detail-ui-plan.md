@@ -262,3 +262,10 @@ Gates per batch: `npm run typecheck`, `npm run lint`, `npm test`, and `android/b
 8. ~~Archive v2 scope~~ **Resolved (section 0):** `VELLUM2` and the raised save cap withdrawn; two-part backup instead.
 9. ~~Search~~ **Resolved (section 0):** consult Doctor/Medical centre are searchable (Batch 1).
 10. Remove on attachments has no confirmation today; leave as is?
+
+## Batch 2, chunk 2a (data only)
+
+- `CASEBOOK_SCHEMA_VERSION` is 4. New optional fields: `Patient.notesModifiedAt` (set only when the general notes text really changes in `patchPatient`; removed when notes are empty) and `Attachment.addedAt` (set on new files in `storeIncoming` and the new-procedure form).
+- Archives: the plaintext CSV and full archive keep the exact header. `notesModifiedAt` rides in the unused `date` cell of the `patient` row; `addedAt` is an optional key in each packed file. The data backup carries `addedAt` through the attachment index, and restore sets it on the Not restored file. Old backups without the fields import with them undefined.
+- An app at schema 3 refuses schema 4 data ("saved by a newer version"), disables storage writes and shows no records; the stored data is left untouched.
+- Helpers live in `src/lib/casebook/detail-data.ts`: `formatNotesDate`, `notesPreview`, `effectiveAddedAt`, `patientAttachmentList`.

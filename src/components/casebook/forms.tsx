@@ -339,6 +339,7 @@ export function SurgeryForm({
           name: pending.file.name,
           mime: pending.file.type || "application/octet-stream",
           size: pending.file.size,
+          addedAt: new Date().toISOString(),
         });
       }
       const input: SurgeryInput = { ...inputBase, notes: notes.trim(), attachments };

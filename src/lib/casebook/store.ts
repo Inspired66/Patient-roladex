@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { deleteBlob, sweepOrphanBlobs } from "./files.ts";
+import { isValidTimestamp, nextNotesModifiedAt } from "./detail-data.ts";
 import { addDaysISO, todayISO } from "./format.ts";
 import { LEGACY_PROCEDURE_DATES, SAMPLE_GENDERS, seedContacts, seedPatients } from "./seed.ts";
 import type {
@@ -16,7 +17,7 @@ import type {
 } from "./types";
 
 export const CASEBOOK_STORAGE_KEY = "vellum-casebook-v1";
-export const CASEBOOK_SCHEMA_VERSION = 3;
+export const CASEBOOK_SCHEMA_VERSION = 4;
 let storageWritesEnabled = true;
 
 type CasebookState = {
@@ -109,6 +110,7 @@ function normalizeFiles(value: unknown): Attachment[] {
         name: typeof file.name === "string" ? file.name : "File",
         mime: typeof file.mime === "string" ? file.mime : "application/octet-stream",
         size: typeof file.size === "number" ? file.size : 0,
+        ...(isValidTimestamp(file.addedAt) ? { addedAt: file.addedAt } : {}),
         ...(notRestored ? { notRestored } : {}),
       },
     ];
@@ -121,6 +123,7 @@ function normalize(patient: Patient): Patient {
       ? patient.gender
       : (SAMPLE_GENDERS[patient.id] ?? "");
   const consults = Array.isArray(patient.consults) ? patient.consults : [];
+  const notes = typeof patient.notes === "string" ? patient.notes : "";
   return {
     id: patient.id,
     name: patient.name,
@@ -128,7 +131,10 @@ function normalize(patient: Patient): Patient {
     gender,
     phone: typeof patient.phone === "string" ? patient.phone : "",
     email: typeof patient.email === "string" ? patient.email : "",
-    notes: typeof patient.notes === "string" ? patient.notes : "",
+    notes,
+    ...(notes.trim() && isValidTimestamp(patient.notesModifiedAt)
+      ? { notesModifiedAt: patient.notesModifiedAt }
+      : {}),
     sample: patient.sample === true,
     surgeries: patient.surgeries
       .filter((surgery) => surgery && typeof surgery.id === "string")
@@ -265,8 +271,15 @@ export const useCasebook = create<CasebookState>()(
         }));
       },
       patchPatient: (id, patch) => {
+        const now = new Date().toISOString();
         set((state) => ({
-          patients: state.patients.map((item) => (item.id === id ? { ...item, ...patch } : item)),
+          patients: state.patients.map((item) => {
+            if (item.id !== id) return item;
+            if (patch.notes === undefined) return { ...item, ...patch };
+            const { notesModifiedAt: _previous, ...rest } = item;
+            const modified = nextNotesModifiedAt(item.notes, patch.notes, item.notesModifiedAt, now);
+            return { ...rest, ...patch, ...(modified ? { notesModifiedAt: modified } : {}) };
+          }),
         }));
       },
       removePatient: (id) => {

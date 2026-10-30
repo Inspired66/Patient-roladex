@@ -3,6 +3,8 @@ export type Attachment = {
   name: string;
   mime: string;
   size: number;
+  // ISO timestamp set when the file was attached. Absent on older files.
+  addedAt?: string;
   // Set when the record came from a data-only backup and the file bytes are not on this device.
   // Carries the index fingerprint so later data backups can write the entry unchanged.
   notRestored?: { sha256: string; addedAt: string };
@@ -35,6 +37,8 @@ export type Patient = {
   phone: string;
   email: string;
   notes: string;
+  // ISO timestamp of the last real change to `notes`. Absent when never edited or when cleared.
+  notesModifiedAt?: string;
   sample?: boolean;
   surgeries: Surgery[];
   consults: Consult[];

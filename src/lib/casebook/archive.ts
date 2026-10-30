@@ -7,6 +7,7 @@ import {
   putBlob,
   withRestoreInProgress,
 } from "./files.ts";
+import { isValidTimestamp } from "./detail-data.ts";
 import { callNative, hasNativeMessageBridge } from "./native-bridge.ts";
 import { given, joinName, surname } from "./format.ts";
 import type { Attachment, Consult, Contact, Patient, Surgery } from "./types.ts";
@@ -51,7 +52,13 @@ export type AttachmentIndexEntry = {
   addedAt: string;
 };
 
-export type PackedFile = { name: string; mime: string; size: number; data: string };
+export type PackedFile = {
+  name: string;
+  mime: string;
+  size: number;
+  data: string;
+  addedAt?: string;
+};
 
 export type DraftPatient = {
   id: string;
@@ -62,6 +69,7 @@ export type DraftPatient = {
   email: string;
   sample: boolean;
   notes: string;
+  notesModifiedAt?: string;
   surgeries: Array<Omit<Surgery, "attachments"> & { files: PackedFile[] }>;
   consults: Array<Omit<Consult, "attachments"> & { files: PackedFile[] }>;
 };
@@ -157,7 +165,13 @@ async function packFiles(files: Attachment[], fileStore: ArchiveFileStore): Prom
       throw new Error(`Attachment "${file.name}" is invalid or exceeds the supported file limits.`);
     }
     const data = await bytesToBase64(new Uint8Array(await blob.arrayBuffer()));
-    packed.push({ name: file.name, mime: file.mime, size: file.size, data });
+    packed.push({
+      name: file.name,
+      mime: file.mime,
+      size: file.size,
+      data,
+      ...(isValidTimestamp(file.addedAt) ? { addedAt: file.addedAt } : {}),
+    });
   }
   return JSON.stringify(packed);
 }
@@ -194,7 +208,13 @@ function unpackFiles(raw: string): PackedFile[] {
     ) {
       throw new Error("The archive contains an invalid or unsupported attachment.");
     }
-    return { name: file.name, mime: file.mime, size: file.size, data: file.data };
+    return {
+      name: file.name,
+      mime: file.mime,
+      size: file.size,
+      data: file.data,
+      ...(isValidTimestamp(file.addedAt) ? { addedAt: file.addedAt } : {}),
+    };
   });
 }
 
@@ -224,7 +244,9 @@ export async function patientsToCsv(
     const push = async (kind: string, general: string, record: string[]) => {
       lines.push([...[kind], ...shared, general, ...record].map((value) => cell(value)).join(","));
     };
-    await push("patient", patient.notes, ["", "", "", "", "", "", ""]);
+    // The unused `date` cell on the patient row carries the notes last-modified timestamp, so the
+    // header stays unchanged and older apps ignore it.
+    await push("patient", patient.notes, ["", patient.notesModifiedAt ?? "", "", "", "", "", ""]);
     for (const surgery of patient.surgeries) {
       await push("procedure", "", [
         surgery.id,
@@ -334,7 +356,11 @@ export function csvToDrafts(csv: string): { drafts: DraftPatient[]; contacts: Co
       draft.sample = read("sample").trim().toLowerCase() === "yes";
     }
     const general = read("general_notes");
-    if (kind === "patient") draft.notes = general;
+    if (kind === "patient") {
+      draft.notes = general;
+      const modified = read("date").trim();
+      if (general.trim() && isValidTimestamp(modified)) draft.notesModifiedAt = modified;
+    }
     else if (general && !draft.notes) draft.notes = general;
     if (kind === "procedure") {
       draft.surgeries.push({
@@ -380,7 +406,13 @@ async function storePacked(files: PackedFile[], written: string[], fileStore: Ar
     const id = crypto.randomUUID();
     await fileStore.putBlob(id, new Blob([bytes], { type: file.mime }));
     written.push(id);
-    attachments.push({ id, name: file.name, mime: file.mime, size: file.size });
+    attachments.push({
+      id,
+      name: file.name,
+      mime: file.mime,
+      size: file.size,
+      ...(file.addedAt ? { addedAt: file.addedAt } : {}),
+    });
   }
   return attachments;
 }
@@ -431,6 +463,7 @@ async function materializeDraftsWithFiles(drafts: DraftPatient[], fileStore: Arc
         email: draft.email,
         sample: draft.sample,
         notes: draft.notes,
+        ...(draft.notesModifiedAt ? { notesModifiedAt: draft.notesModifiedAt } : {}),
         surgeries,
         consults,
       });
@@ -499,6 +532,7 @@ export function applyAttachmentIndex(patients: Patient[], index: AttachmentIndex
       name: entry.name,
       mime: entry.mime,
       size: entry.size,
+      addedAt: entry.addedAt,
       notRestored: { sha256: entry.sha256, addedAt: entry.addedAt },
     });
   }
@@ -593,7 +627,6 @@ export async function buildAttachmentIndex(
       if (blob.size <= 0 || blob.size !== file.size) {
         throw new Error(`Attachment "${file.name}" does not match its stored size.`);
       }
-      const added = (file as Attachment & { addedAt?: string }).addedAt;
       index.push({
         id: file.id,
         patientId,
@@ -603,7 +636,7 @@ export async function buildAttachmentIndex(
         mime: file.mime,
         size: file.size,
         sha256: await sha256Hex(await blob.arrayBuffer()),
-        addedAt: added || owner.date,
+        addedAt: file.addedAt || owner.date,
       });
       await tick();
     }

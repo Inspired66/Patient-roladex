@@ -39,10 +39,10 @@ function patient(overrides: Partial<Patient> = {}): Patient {
   };
 }
 
-test("schema version is 3 and newer versions are still refused", () => {
-  assert.equal(CASEBOOK_SCHEMA_VERSION, 3);
+test("schema version is 4 and newer versions are still refused", () => {
+  assert.equal(CASEBOOK_SCHEMA_VERSION, 4);
   assert.throws(
-    () => migrateStoredCasebook(JSON.stringify({ version: 4, state: { patients: [] } })),
+    () => migrateStoredCasebook(JSON.stringify({ version: 5, state: { patients: [] } })),
     /newer version/,
   );
 });

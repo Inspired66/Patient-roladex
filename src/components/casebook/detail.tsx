@@ -50,6 +50,7 @@ async function storeIncoming(existing: Attachment[], incoming: File[]) {
         name: file.name,
         mime: file.type || "application/octet-stream",
         size: file.size,
+        addedAt: new Date().toISOString(),
       });
     }
     return { attachments: [...existing, ...stored], error };
