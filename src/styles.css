@@ -1601,3 +1601,23 @@ a.card-contact span {
   font-size: 0.82rem;
   line-height: 1.45;
 }
+
+.row-notice {
+  margin-top: 0.4rem;
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+}
+.row-notice p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.row-notice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+.row-notice-actions button {
+  min-height: 2.75rem;
+  min-width: 2.75rem;
+}

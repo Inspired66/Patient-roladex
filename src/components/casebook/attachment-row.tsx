@@ -14,6 +14,8 @@ import {
   type TextPreview,
 } from "@/lib/casebook/attachment-open";
 import { useBackLayer } from "@/lib/casebook/back";
+import { useRowNotice } from "@/components/casebook/use-row-notice";
+import { noticeForOpenResult } from "@/lib/casebook/row-notice";
 import { canPlayAudioInWebView } from "@/lib/casebook/audio-format";
 import { attachmentDetail } from "@/lib/casebook/format";
 import type { Attachment } from "@/lib/casebook/types";
@@ -43,8 +45,8 @@ export function AttachmentRow({
 }) {
   const [media, setMedia] = useState<Media | null>(null);
   const [text, setText] = useState<TextPreview | null>(null);
-  const [notice, setNotice] = useState("");
-  const [audioExternalPrompt, setAudioExternalPrompt] = useState(false);
+  const rowNotice = useRowNotice();
+  const { notice } = rowNotice;
   const [confirm, setConfirm] = useState(false);
   const busy = useRef(false);
   const Icon = ICON[attachmentKind(file)];
@@ -63,18 +65,24 @@ export function AttachmentRow({
       setMedia(null);
       return;
     }
+    if (rowNotice.current()?.kind === "prompt") {
+      rowNotice.dismiss();
+      return;
+    }
     busy.current = true;
-    setNotice("");
-    setAudioExternalPrompt(false);
+    rowNotice.beginAction();
     try {
       const result = await openAttachment(file);
-      if (result.type === "message") setNotice(result.message);
-      else if (result.type === "text") setText(result.preview);
-      else if (result.type === "audio-unplayable") setAudioExternalPrompt(true);
+      if (!rowNotice.alive()) return;
+      if (result.type === "message") {
+        const { kind, handoff } = noticeForOpenResult(result.outcome, result.message);
+        rowNotice.show(kind, result.message, handoff);
+      } else if (result.type === "text") setText(result.preview);
+      else if (result.type === "audio-unplayable") rowNotice.show("prompt", AUDIO_UNPLAYABLE_MESSAGE);
       else if (result.type === "audio") {
         const audio = document.createElement("audio");
         if (!canPlayAudioInWebView(result.blob.type, (type) => audio.canPlayType(type))) {
-          setAudioExternalPrompt(true);
+          rowNotice.show("prompt", AUDIO_UNPLAYABLE_MESSAGE);
         } else {
           setMedia({ kind: "audio", url: URL.createObjectURL(result.blob) });
         }
@@ -89,10 +97,12 @@ export function AttachmentRow({
   async function openAudioExternally() {
     if (busy.current) return;
     busy.current = true;
-    setNotice("");
+    rowNotice.beginAction();
     try {
       const result = await openExternally(file);
-      setNotice(result.message);
+      if (!rowNotice.alive()) return;
+      const { kind, handoff } = noticeForOpenResult(result.outcome, result.message);
+      rowNotice.show(kind, result.message, handoff);
     } finally {
       busy.current = false;
     }
@@ -105,7 +115,7 @@ export function AttachmentRow({
           type="button"
           className="file-open"
           aria-label={ariaLabel ?? attachmentOpenLabel(file)}
-          aria-expanded={media?.kind === "audio" || audioExternalPrompt ? true : undefined}
+          aria-expanded={media?.kind === "audio" || notice?.kind === "prompt" ? true : undefined}
           onClick={() => void open()}
         >
           <span className="file-icon" aria-hidden>
@@ -129,16 +139,26 @@ export function AttachmentRow({
         ) : null}
       </div>
       {notice ? (
-        <p className="slip-who" role="status">
-          {notice}
-        </p>
-      ) : null}
-      {audioExternalPrompt ? (
-        <div className="audio-open-prompt" role="status">
-          <p>{AUDIO_UNPLAYABLE_MESSAGE}</p>
-          <button type="button" className="btn-ghost" onClick={() => void openAudioExternally()}>
-            Open in another app
-          </button>
+        <div
+          className={`row-notice row-notice-${notice.kind}`}
+          role={notice.kind === "error" ? "alert" : "status"}
+        >
+          <p>{notice.message}</p>
+          <div className="row-notice-actions">
+            {notice.kind === "prompt" ? (
+              <button type="button" className="btn-ghost" onClick={() => void openAudioExternally()}>
+                Open in another app
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="btn-text row-notice-dismiss"
+              aria-label={`Dismiss message for ${file.name}`}
+              onClick={() => rowNotice.dismiss()}
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
       ) : null}
       {media?.kind === "audio" ? (
@@ -148,9 +168,8 @@ export function AttachmentRow({
           src={media.url}
           preload="none"
           onError={() => {
-            setNotice("");
             setMedia(null);
-            setAudioExternalPrompt(true);
+            rowNotice.show("prompt", AUDIO_UNPLAYABLE_MESSAGE);
           }}
         />
       ) : null}
