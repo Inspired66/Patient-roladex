@@ -12,10 +12,20 @@ export const ATTACHMENT_MENU_OPTIONS = [
 const FILE_ACCEPT =
   "image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,image/bmp,audio/mpeg,audio/mp4,audio/aac,audio/wav,audio/x-wav,audio/ogg,audio/webm,audio/3gpp,audio/amr,application/pdf,text/plain,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif,.bmp,.mp3,.m4a,.aac,.wav,.ogg,.webm,.3gp,.amr,.pdf,.txt";
 
-export function attachmentPickerConfig(purpose: AttachmentPickerPurpose, maxItems: number) {
+export function attachmentPickerConfig(
+  purpose: AttachmentPickerPurpose,
+  maxItems: number,
+  options: { shrink?: boolean } = {},
+) {
+  const count = Math.max(1, Math.min(MAX_FILES, Math.floor(maxItems)));
+  // Only the camera may carry the shrink flag; native refuses it for any other purpose.
+  const payload =
+    purpose === "camera" && typeof options.shrink === "boolean"
+      ? { purpose, maxItems: count, shrink: options.shrink }
+      : { purpose, maxItems: count };
   return {
     action: "armAttachmentPicker",
-    payload: { purpose, maxItems: Math.max(1, Math.min(MAX_FILES, Math.floor(maxItems))) },
+    payload,
     accept:
       purpose === "photos"
         ? "image/*"

@@ -60,6 +60,21 @@ public final class NativeAttachmentPickerPolicyTest {
     check(
         !NativeAttachmentPolicy.isAllowedType("application/octet-stream", "backup.vellum"),
         "attachment policy still rejects vellum backup");
+    check(NativeAttachmentPickerPolicy.isValidPayloadShape("camera", 2, null), "camera without shrink");
+    check(NativeAttachmentPickerPolicy.isValidPayloadShape("camera", 3, Boolean.FALSE), "camera with shrink");
+    check(!NativeAttachmentPickerPolicy.isValidPayloadShape("photos", 3, Boolean.TRUE), "shrink refused for photos");
+    check(!NativeAttachmentPickerPolicy.isValidPayloadShape("files", 3, Boolean.TRUE), "shrink refused for files");
+    check(!NativeAttachmentPickerPolicy.isValidPayloadShape("camera", 3, "true"), "non-boolean shrink refused");
+    check(!NativeAttachmentPickerPolicy.isValidPayloadShape("camera", 3, null), "missing shrink value refused");
+    check(!NativeAttachmentPickerPolicy.isValidPayloadShape("camera", 4, Boolean.TRUE), "extra field refused");
+    check(!NativeAttachmentPickerPolicy.isValidPayloadShape("camera", 2, Boolean.TRUE), "count mismatch refused");
+    NativeAttachmentPickerPolicy.Arm shrinkArm = new NativeAttachmentPickerPolicy.Arm();
+    check(shrinkArm.arm("camera", 1, false, 0), "arm camera with shrink off");
+    NativeAttachmentPickerPolicy.Request off = shrinkArm.consume(1);
+    check(off != null && !off.shrink, "shrink off is carried once");
+    check(shrinkArm.consume(2) == null, "shrink request is one-shot");
+    check(shrinkArm.arm("camera", 1, 5), "default arm");
+    check(shrinkArm.consume(6).shrink, "shrink defaults on");
     System.out.println("NativeAttachmentPickerPolicyTest: " + checks + " checks passed");
   }
 

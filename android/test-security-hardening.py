@@ -163,6 +163,45 @@ class WebAssetCheckTest(unittest.TestCase):
             ),
         )
 
+    def test_camera_capture_is_permissioned_private_and_cleaned(self) -> None:
+        root = Path(__file__).parent
+        source = (root / "src/com/vellum/casebook/MainActivity.java").read_text(encoding="utf-8")
+        capture = (root / "src/com/vellum/casebook/CameraCapture.java").read_text(encoding="utf-8")
+        policy = (root / "src/com/vellum/casebook/NativeCameraPolicy.java").read_text(encoding="utf-8")
+        start = source.split("private void startCameraCapture()", 1)[1].split("\n  private ", 1)[0]
+        self.assertLess(
+            start.index("checkSelfPermission(android.Manifest.permission.CAMERA)"),
+            start.index("requestPermissions("),
+        )
+        self.assertIn("cameraPermissionPending", source)
+        self.assertIn("shouldShowRequestPermissionRationale(android.Manifest.permission.CAMERA)", source)
+        self.assertNotIn("ACTION_VIDEO_CAPTURE", source)
+        # Capture file: neutral name, private cache, no persistable grant, grant revoked, swept.
+        self.assertIn('File.createTempFile("vellum-", ".jpg", directory)', source)
+        self.assertIn('new File(getCacheDir(), "camera")', source)
+        self.assertIn("revokeUriPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION", source)
+        self.assertNotIn("FLAG_GRANT_PERSISTABLE_URI_PERMISSION", source.split("private boolean launchCamera()", 1)[1].split("\n  private ", 1)[0])
+        self.assertIn("sweepCameraFiles(true);", source.split("protected void onCreate(", 1)[1].split("\n  private ", 1)[0])
+        self.assertIn("sweepCameraFiles(false);", source.split("protected void onResume()", 1)[1].split("\n  @Override", 1)[0])
+        self.assertIn("sweepCameraFiles(true);", source.split("protected void onDestroy()", 1)[1])
+        # Processing: Android graphics only, GPS removed and verified, never a zero-byte file.
+        for needle in ("inJustDecodeBounds", "inSampleSize", "TAG_ORIENTATION", "Bitmap.CompressFormat.JPEG",
+                       "exif.saveAttributes()", "TAG_GPS_LATITUDE", "OutOfMemoryError", "fitsAttachmentLimit"):
+            self.assertIn(needle, capture)
+        self.assertIn("MAX_EDGE = 2560", policy)
+        self.assertIn("{82, 72, 62}", policy)
+        # Status goes to the page only as fixed scripts for allow-listed codes.
+        notify = source.split("private void notifyCamera(", 1)[1].split("\n  // Camera needs", 1)[0]
+        self.assertIn("NativeCameraPolicy.isStatusCode(code)", notify)
+        self.assertIn("isTrustedCurrentPage()", notify)
+        self.assertNotIn("__vellumCameraStatus('\" +", notify)
+        self.assertNotIn("Log.", capture)
+        self.assertNotIn("Log.", policy)
+        # The shrink flag is accepted only through the validated payload shape.
+        self.assertIn("NativeAttachmentPickerPolicy.isValidPayloadShape", source)
+        manifest = (root / "AndroidManifest.xml").read_text(encoding="utf-8")
+        self.assertNotIn('android:exported="true"', manifest.split("<provider", 1)[1].split("/>", 1)[0])
+
     def test_android_build_uses_pinned_webkit_and_scans_packaged_assets(self) -> None:
         build = Path(__file__).with_name("build-apk.sh").read_text(encoding="utf-8")
         self.assertIn("export VITE_GROK_EXTENSIONS=0", build)

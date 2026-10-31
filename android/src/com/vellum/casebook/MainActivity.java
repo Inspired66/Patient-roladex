@@ -120,6 +120,11 @@ public class MainActivity extends Activity {
   private final Set<Integer> completedMigrationPorts = new HashSet<>();
   private String pendingMicRequestId;
   private String pendingCameraRequestId;
+  private boolean cameraPermissionPending;
+  private android.app.AlertDialog cameraDialog;
+  private boolean cameraShrink = true;
+  private final java.util.concurrent.ExecutorService cameraExecutor =
+      java.util.concurrent.Executors.newSingleThreadExecutor();
   private String pendingSavePickerRequestId;
   private String pendingSaveFinishRequestId;
   private String pendingListRequestId;
@@ -133,6 +138,8 @@ public class MainActivity extends Activity {
   @Override
   protected void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
+    // A killed process can leave capture files behind: nothing in flight survives a restart.
+    sweepCameraFiles(true);
     openTransfer = new NativeOpenPolicy.Transfer(openRoot());
     dropOpenCopies();
     webView = new WebView(this);
@@ -259,7 +266,10 @@ public class MainActivity extends Activity {
   }
 
   private void dropCameraOutput() {
-    if (cameraOutput != null) VellumFileProvider.delete(cameraOutput);
+    if (cameraOutput != null) {
+      revokeCameraGrant(cameraOutput);
+      VellumFileProvider.delete(cameraOutput);
+    }
     cameraOutput = null;
     cameraOutputFile = null;
   }
@@ -1199,12 +1209,13 @@ public class MainActivity extends Activity {
   private void armAttachmentPicker(String requestId, JSONObject payload) {
     Object rawPurpose = payload == null ? null : payload.opt("purpose");
     Object rawMaxItems = payload == null ? null : payload.opt("maxItems");
+    Object rawShrink = payload == null ? null : payload.opt("shrink");
     String purpose = rawPurpose instanceof String ? (String) rawPurpose : null;
     long rawCount = rawMaxItems instanceof Number ? ((Number) rawMaxItems).longValue() : -1;
     int maxItems = rawCount >= Integer.MIN_VALUE && rawCount <= Integer.MAX_VALUE ? (int) rawCount : -1;
     Uri page = webView == null || webView.getUrl() == null ? null : Uri.parse(webView.getUrl());
     if (payload == null
-        || payload.length() != 2
+        || !NativeAttachmentPickerPolicy.isValidPayloadShape(purpose, payload.length(), rawShrink)
         || !(rawMaxItems instanceof Integer || rawMaxItems instanceof Long)
         || !NativeAttachmentPickerPolicy.isValidRequest(
             page == null ? null : page.getScheme(),
@@ -1212,7 +1223,11 @@ public class MainActivity extends Activity {
             page == null ? -1 : page.getPort(),
             purpose,
             maxItems)
-        || !attachmentPickerArm.arm(purpose, maxItems, SystemClock.elapsedRealtime())) {
+        || !attachmentPickerArm.arm(
+            purpose,
+            maxItems,
+            !(rawShrink instanceof Boolean) || (Boolean) rawShrink,
+            SystemClock.elapsedRealtime())) {
       sendNativeError(requestId, "The attachment picker request is invalid.");
       return;
     }
@@ -1228,6 +1243,8 @@ public class MainActivity extends Activity {
 
   private void launchAttachmentPicker(NativeAttachmentPickerPolicy.Request request) {
     dropCameraOutput();
+    cameraPermissionPending = false;
+    cameraShrink = request.shrink;
     pickerUris.clear();
     attachmentPickerMaxItems = request.maxItems;
     try {
@@ -1264,10 +1281,7 @@ public class MainActivity extends Activity {
           return;
         }
         case NativeAttachmentPickerPolicy.CAMERA:
-          if (!launchCamera()) {
-            showAttachmentError("This phone could not open the camera.");
-            finishUpload(null);
-          }
+          startCameraCapture();
           return;
         case NativeAttachmentPickerPolicy.RECORDER: {
           Intent intent = new Intent(MediaStore.Audio.Media.RECORD_SOUND_ACTION);
@@ -1279,10 +1293,14 @@ public class MainActivity extends Activity {
           finishUpload(null);
       }
     } catch (ActivityNotFoundException error) {
+      if (NativeAttachmentPickerPolicy.CAMERA.equals(request.purpose)) {
+        notifyCamera(NativeCameraPolicy.NO_CAMERA);
+        dropCameraOutput();
+        finishUpload(null);
+        return;
+      }
       showAttachmentError(
-          NativeAttachmentPickerPolicy.CAMERA.equals(request.purpose)
-              ? "This phone has no camera app available."
-              : NativeAttachmentPickerPolicy.RECORDER.equals(request.purpose)
+          NativeAttachmentPickerPolicy.RECORDER.equals(request.purpose)
                   ? "This phone has no voice recorder app available."
                   : "This phone has no app that can select that type of file.");
       dropCameraOutput();
@@ -1360,6 +1378,180 @@ public class MainActivity extends Activity {
     return uris.toArray(new Uri[0]);
   }
 
+  private void revokeCameraGrant(Uri uri) {
+    try {
+      revokeUriPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
+    } catch (RuntimeException ignored) {
+      /* nothing was granted */
+    }
+  }
+
+  private File cameraDirectory() {
+    return new File(getCacheDir(), "camera");
+  }
+
+  // Deletes capture files: everything at start and destroy, only old ones on resume.
+  private void sweepCameraFiles(boolean everything) {
+    File[] files = cameraDirectory().listFiles();
+    if (files == null) return;
+    long now = System.currentTimeMillis();
+    for (File file : files) {
+      if (!everything && !NativeCameraPolicy.isStale(now - file.lastModified())) continue;
+      VellumFileProvider.forget(file);
+      file.delete();
+    }
+  }
+
+  private void notifyCamera(String code) {
+    if (!NativeCameraPolicy.isStatusCode(code)) return;
+    final String script;
+    switch (code) {
+      case NativeCameraPolicy.PROCESSING:
+        script = "window.__vellumCameraStatus&&window.__vellumCameraStatus('processing')";
+        break;
+      case NativeCameraPolicy.DONE:
+        script = "window.__vellumCameraStatus&&window.__vellumCameraStatus('done')";
+        break;
+      case NativeCameraPolicy.CANCELLED:
+        script = "window.__vellumCameraStatus&&window.__vellumCameraStatus('cancelled')";
+        break;
+      case NativeCameraPolicy.DENIED:
+        script = "window.__vellumCameraStatus&&window.__vellumCameraStatus('denied')";
+        break;
+      case NativeCameraPolicy.SETTINGS:
+        script = "window.__vellumCameraStatus&&window.__vellumCameraStatus('settings')";
+        break;
+      case NativeCameraPolicy.NO_CAMERA:
+        script = "window.__vellumCameraStatus&&window.__vellumCameraStatus('no-camera')";
+        break;
+      case NativeCameraPolicy.EMPTY:
+        script = "window.__vellumCameraStatus&&window.__vellumCameraStatus('empty')";
+        break;
+      case NativeCameraPolicy.TOO_LARGE:
+        script = "window.__vellumCameraStatus&&window.__vellumCameraStatus('too-large')";
+        break;
+      case NativeCameraPolicy.TOO_LARGE_ORIGINAL:
+        script = "window.__vellumCameraStatus&&window.__vellumCameraStatus('too-large-original')";
+        break;
+      case NativeCameraPolicy.FALLBACK:
+        script = "window.__vellumCameraStatus&&window.__vellumCameraStatus('fallback')";
+        break;
+      case NativeCameraPolicy.REENCODED:
+        script = "window.__vellumCameraStatus&&window.__vellumCameraStatus('reencoded')";
+        break;
+      default:
+        script = "window.__vellumCameraStatus&&window.__vellumCameraStatus('failed')";
+    }
+    runOnUiThread(() -> {
+      if (webView != null && isTrustedCurrentPage()) webView.evaluateJavascript(script, null);
+    });
+  }
+
+  // Camera needs the runtime permission before the capture intent: without it the system throws.
+  private void startCameraCapture() {
+    if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+      if (!launchCamera()) {
+        notifyCamera(NativeCameraPolicy.FAILED);
+        finishUpload(null);
+      }
+      return;
+    }
+    cameraPermissionPending = true;
+    cameraDialog = new android.app.AlertDialog.Builder(this)
+        .setTitle("Use the camera?")
+        .setMessage("Vellum uses the camera only when you choose Camera, to take a photo to attach. Nothing is shared.")
+        .setCancelable(true)
+        .setPositiveButton("Continue", (dialog, which) -> {
+          if (!cameraPermissionPending) return;
+          requestPermissions(new String[] {android.Manifest.permission.CAMERA}, CAM_REQ);
+        })
+        .setNegativeButton("Not now", (dialog, which) -> endCameraPermission(NativeCameraPolicy.CANCELLED))
+        .setOnCancelListener(dialog -> endCameraPermission(NativeCameraPolicy.CANCELLED))
+        .create();
+    cameraDialog.show();
+  }
+
+  private void endCameraPermission(String status) {
+    if (!cameraPermissionPending) return;
+    cameraPermissionPending = false;
+    notifyCamera(status);
+    finishUpload(null);
+  }
+
+  private void onCameraPermissionResult(boolean granted) {
+    if (!cameraPermissionPending) return;
+    if (!granted) {
+      endCameraPermission(
+          NativeCameraPolicy.statusAfterDenial(
+              shouldShowRequestPermissionRationale(android.Manifest.permission.CAMERA)));
+      return;
+    }
+    cameraPermissionPending = false;
+    if (upload == null) return;
+    if (!launchCamera()) {
+      notifyCamera(NativeCameraPolicy.FAILED);
+      finishUpload(null);
+    }
+  }
+
+  // The camera app has returned. The raw photo is detached and processed off the UI thread; it is
+  // deleted as soon as the processed copy exists, or on any failure.
+  private void handleCameraResult(int resultCode) {
+    Uri taken = cameraOutput;
+    File takenFile = cameraOutputFile;
+    final ValueCallback<Uri[]> callback = upload;
+    if (taken != null) revokeCameraGrant(taken);
+    if (resultCode != RESULT_OK || taken == null || takenFile == null) {
+      dropCameraOutput();
+      notifyCamera(NativeCameraPolicy.CANCELLED);
+      finishUpload(null);
+      return;
+    }
+    if (!takenFile.isFile() || takenFile.length() <= 0) {
+      dropCameraOutput();
+      notifyCamera(NativeCameraPolicy.EMPTY);
+      finishUpload(null);
+      return;
+    }
+    VellumFileProvider.forget(takenFile);
+    cameraOutput = null;
+    cameraOutputFile = null;
+    final boolean shrink = cameraShrink;
+    final File directory = cameraDirectory();
+    notifyCamera(NativeCameraPolicy.PROCESSING);
+    try {
+      cameraExecutor.execute(() -> {
+        final CameraCapture.Result result = CameraCapture.process(takenFile, directory, shrink);
+        runOnUiThread(() -> finishCameraCapture(callback, result));
+      });
+    } catch (RuntimeException error) {
+      takenFile.delete();
+      notifyCamera(NativeCameraPolicy.FAILED);
+      finishUpload(null);
+    }
+  }
+
+  private void finishCameraCapture(ValueCallback<Uri[]> callback, CameraCapture.Result result) {
+    if (isDestroyed() || isFinishing()) {
+      if (result.file != null) result.file.delete();
+      return;
+    }
+    if (upload == callback) upload = null;
+    if (result.file == null || !result.file.isFile() || result.file.length() <= 0) {
+      if (result.file != null) result.file.delete();
+      notifyCamera(result.status != null ? result.status : NativeCameraPolicy.FAILED);
+      if (callback != null) callback.onReceiveValue(null);
+      return;
+    }
+    Uri processed = VellumFileProvider.register(result.file);
+    VellumFileProvider.markReady(processed);
+    cameraOutput = processed;
+    cameraOutputFile = result.file;
+    pickerUris.add(processed.toString());
+    notifyCamera(result.notice != null ? result.notice : NativeCameraPolicy.DONE);
+    if (callback != null) callback.onReceiveValue(new Uri[] {processed});
+  }
+
   private boolean launchCamera() {
     try {
       Uri dest = createCameraOutput();
@@ -1368,6 +1560,11 @@ public class MainActivity extends Activity {
       camera.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
       camera.setClipData(ClipData.newRawUri("photo", dest));
       startActivityForResult(camera, CAMERA_REQ);
+      return true;
+    } catch (ActivityNotFoundException error) {
+      dropCameraOutput();
+      notifyCamera(NativeCameraPolicy.NO_CAMERA);
+      finishUpload(null);
       return true;
     } catch (Exception error) {
       dropCameraOutput();
@@ -2091,24 +2288,7 @@ public class MainActivity extends Activity {
         }
         return;
       }
-      if (upload != null) {
-        if (resultCode == RESULT_OK && taken != null) {
-          String problem = attachmentError(taken);
-          if (problem == null) {
-            VellumFileProvider.markReady(taken);
-            pickerUris.add(taken.toString());
-            finishUpload(new Uri[] {taken});
-          } else {
-            showAttachmentError(problem);
-            dropCameraOutput();
-            finishUpload(null);
-          }
-        } else {
-          dropCameraOutput();
-          finishUpload(null);
-        }
-        upload = null;
-      }
+      if (upload != null) handleCameraResult(resultCode);
       attachmentPickerMaxItems = NativeAttachmentPolicy.MAX_FILES;
     }
     if (requestCode == PICK_REQ) {
@@ -2216,6 +2396,10 @@ public class MainActivity extends Activity {
       }
       return;
     }
+    if (requestCode == CAM_REQ && cameraPermissionPending) {
+      onCameraPermissionResult(grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED);
+      return;
+    }
     if (requestCode == CAM_REQ && camFromBridge) {
       camFromBridge = false;
       boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
@@ -2232,6 +2416,7 @@ public class MainActivity extends Activity {
     super.onResume();
     // Coming back from another app ends the hand-off: grant revoked, temporary copy deleted.
     dropOpenCopies();
+    sweepCameraFiles(false);
   }
 
   @Override
@@ -2265,6 +2450,9 @@ public class MainActivity extends Activity {
     migrationServer = null;
     clearMigrationWrite();
     dropCameraOutput();
+    cameraExecutor.shutdownNow();
+    if (cameraDialog != null) cameraDialog.dismiss();
+    sweepCameraFiles(true);
     synchronized (saveLock) {
       try {
         if (saveBuffer != null) saveBuffer.close();
@@ -2318,6 +2506,16 @@ public class MainActivity extends Activity {
 
     private static boolean isOpenUri(Uri uri) {
       return uri != null && OPEN_TYPES.containsKey(uri.toString());
+    }
+
+    static void forget(File file) {
+      if (file == null) return;
+      for (java.util.Map.Entry<String, File> entry : FILES.entrySet()) {
+        if (file.equals(entry.getValue())) {
+          READY_FOR_READ.remove(entry.getKey());
+          FILES.remove(entry.getKey());
+        }
+      }
     }
 
     static void markReady(Uri uri) {

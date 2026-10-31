@@ -1621,3 +1621,24 @@ a.card-contact span {
   min-height: 2.75rem;
   min-width: 2.75rem;
 }
+
+.attachment-menu-switch {
+  display: flex;
+  min-height: 3rem;
+  align-items: flex-start;
+  gap: 0.8rem;
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.25rem;
+}
+.attachment-menu-switch input {
+  flex: 0 0 auto;
+  width: 1.5rem;
+  height: 1.5rem;
+  margin-top: 0.1rem;
+  accent-color: var(--color-accent);
+}
+.attach-progress {
+  margin: 0.4rem 0 0;
+  color: var(--color-muted);
+  font-size: 0.85rem;
+}

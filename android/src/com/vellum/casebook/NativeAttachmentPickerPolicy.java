@@ -26,12 +26,23 @@ final class NativeAttachmentPickerPolicy {
         || RECORDER.equals(purpose);
   }
 
+  // The payload is {purpose, maxItems}, plus a boolean "shrink" that only the camera may send.
+  static boolean isValidPayloadShape(String purpose, int fieldCount, Object shrink) {
+    if (fieldCount == 2) return shrink == null;
+    return fieldCount == 3 && shrink instanceof Boolean && CAMERA.equals(purpose);
+  }
+
   static final class Arm {
     private String purpose;
     private int maxItems;
+    private boolean shrink;
     private long expiresAt;
 
     boolean arm(String nextPurpose, int nextMaxItems, long now) {
+      return arm(nextPurpose, nextMaxItems, true, now);
+    }
+
+    boolean arm(String nextPurpose, int nextMaxItems, boolean nextShrink, long now) {
       if (purpose != null && expiresAt >= now) return false;
       if (!isAllowedPurpose(nextPurpose) || nextMaxItems < 1 || nextMaxItems > MAX_ITEMS) {
         clear();
@@ -39,6 +50,7 @@ final class NativeAttachmentPickerPolicy {
       }
       purpose = nextPurpose;
       maxItems = nextMaxItems;
+      shrink = nextShrink;
       expiresAt = now + ARM_LIFETIME_MS;
       return true;
     }
@@ -48,7 +60,7 @@ final class NativeAttachmentPickerPolicy {
         clear();
         return null;
       }
-      Request request = new Request(purpose, maxItems);
+      Request request = new Request(purpose, maxItems, shrink);
       clear();
       return request;
     }
@@ -56,6 +68,7 @@ final class NativeAttachmentPickerPolicy {
     void clear() {
       purpose = null;
       maxItems = 0;
+      shrink = true;
       expiresAt = 0;
     }
   }
@@ -63,10 +76,12 @@ final class NativeAttachmentPickerPolicy {
   static final class Request {
     final String purpose;
     final int maxItems;
+    final boolean shrink;
 
-    Request(String purpose, int maxItems) {
+    Request(String purpose, int maxItems, boolean shrink) {
       this.purpose = purpose;
       this.maxItems = maxItems;
+      this.shrink = shrink;
     }
   }
 }

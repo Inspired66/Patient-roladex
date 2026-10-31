@@ -9,6 +9,7 @@ mkdir -p "$BUILD"
 javac --release 17 -d "$BUILD" \
   "$ROOT/android/src/com/vellum/casebook/NativeAttachmentPolicy.java" \
   "$ROOT/android/src/com/vellum/casebook/NativeAttachmentPickerPolicy.java" \
+  "$ROOT/android/src/com/vellum/casebook/NativeCameraPolicy.java" \
   "$ROOT/android/src/com/vellum/casebook/NativeRestorePickerPolicy.java" \
   "$ROOT/android/src/com/vellum/casebook/NativeSavePolicy.java" \
   "$ROOT/android/src/com/vellum/casebook/NativeAudioPermissionPolicy.java" \
@@ -17,6 +18,7 @@ javac --release 17 -d "$BUILD" \
   "$ROOT/android/src/com/vellum/casebook/NativeWebAssetMime.java" \
   "$ROOT/android/test/com/vellum/casebook/NativeAttachmentPolicyTest.java" \
   "$ROOT/android/test/com/vellum/casebook/NativeAttachmentPickerPolicyTest.java" \
+  "$ROOT/android/test/com/vellum/casebook/NativeCameraPolicyTest.java" \
   "$ROOT/android/test/com/vellum/casebook/NativeRestorePickerPolicyTest.java" \
   "$ROOT/android/test/com/vellum/casebook/NativeSavePolicyTest.java" \
   "$ROOT/android/test/com/vellum/casebook/NativeAudioPermissionPolicyTest.java" \
@@ -25,6 +27,7 @@ javac --release 17 -d "$BUILD" \
   "$ROOT/android/test/com/vellum/casebook/NativeWebAssetMimeTest.java"
 java -cp "$BUILD" com.vellum.casebook.NativeAttachmentPolicyTest
 java -cp "$BUILD" com.vellum.casebook.NativeAttachmentPickerPolicyTest
+java -cp "$BUILD" com.vellum.casebook.NativeCameraPolicyTest
 java -cp "$BUILD" com.vellum.casebook.NativeRestorePickerPolicyTest
 java -cp "$BUILD" com.vellum.casebook.NativeSavePolicyTest
 java -cp "$BUILD" com.vellum.casebook.NativeAudioPermissionPolicyTest

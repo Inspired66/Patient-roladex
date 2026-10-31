@@ -9,6 +9,15 @@ import {
   attachmentPickerConfig,
   type AttachmentPickerPurpose,
 } from "@/lib/casebook/attachment-menu";
+import {
+  CAMERA_PROGRESS_LIMIT_MS,
+  CAMERA_SHRINK_HINT_OFF,
+  CAMERA_SHRINK_HINT_ON,
+  CAMERA_SHRINK_LABEL,
+  cameraStatusView,
+  readCameraShrink,
+  writeCameraShrink,
+} from "@/lib/casebook/camera-capture";
 
 const FILE_ACCEPT = attachmentPickerConfig("files", MAX_FILES).accept;
 
@@ -30,11 +39,48 @@ export function AttachControls({
 }) {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState("");
+  const [processing, setProcessing] = useState(false);
+  const [shrink, setShrink] = useState(() =>
+    typeof localStorage === "undefined" ? true : readCameraShrink(localStorage),
+  );
+  const watchdog = useRef<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const cameraActive = useRef(false);
   const titleId = useId();
   const limit = attachmentMenuLimitState(disabled ? 0 : remaining);
+
+  function endProcessing() {
+    if (watchdog.current !== null) window.clearTimeout(watchdog.current);
+    watchdog.current = null;
+    setProcessing(false);
+  }
+
+  // Native reports camera progress and results by calling this with a fixed status code. The
+  // control that started the capture is the one that listens; the watchdog frees the button if
+  // no result ever arrives.
+  useEffect(() => {
+    const host = window as Window & { __vellumCameraStatus?: (code: string) => void };
+    const listener = (code: string) => {
+      const view = cameraStatusView(code);
+      if (!view || !cameraActive.current) return;
+      setMessage(view.message);
+      if (view.busy) {
+        setProcessing(true);
+        if (watchdog.current !== null) window.clearTimeout(watchdog.current);
+        watchdog.current = window.setTimeout(endProcessing, CAMERA_PROGRESS_LIMIT_MS);
+      } else {
+        endProcessing();
+        cameraActive.current = false;
+      }
+    };
+    host.__vellumCameraStatus = listener;
+    return () => {
+      if (host.__vellumCameraStatus === listener) delete host.__vellumCameraStatus;
+      if (watchdog.current !== null) window.clearTimeout(watchdog.current);
+    };
+  }, []);
 
   useBackLayer(open, () => setOpen(false));
 
@@ -84,7 +130,8 @@ export function AttachControls({
       setMessage("The attachment picker is unavailable.");
       return;
     }
-    const config = attachmentPickerConfig(purpose, remaining);
+    cameraActive.current = purpose === "camera";
+    const config = attachmentPickerConfig(purpose, remaining, { shrink });
     input.accept = config.accept;
     input.multiple = config.multiple;
     if (hasNativeMessageBridge()) {
@@ -120,7 +167,7 @@ export function AttachControls({
         aria-expanded={open}
         aria-describedby={limit.limitReached ? `${titleId}-limit` : undefined}
         title={limit.disabledReason || undefined}
-        disabled={limit.disabled}
+        disabled={limit.disabled || processing}
         onClick={() => setOpen(true)}
       >
         <Paperclip aria-hidden size={18} />
@@ -131,7 +178,11 @@ export function AttachControls({
           {limit.disabledReason}
         </p>
       ) : null}
-      {message ? (
+      {processing ? (
+        <p className="attach-progress" role="status">
+          Preparing photo…
+        </p>
+      ) : message ? (
         <p className="form-error attach-message" role="status">
           {message}
         </p>
@@ -144,6 +195,10 @@ export function AttachControls({
         accept={FILE_ACCEPT}
         aria-label="Choose attachment files"
         onChange={(event) => {
+          if (cameraActive.current) {
+            cameraActive.current = false;
+            endProcessing();
+          }
           const list = Array.from(event.target.files ?? []);
           if (list.length) onFiles(list);
           event.target.value = "";
@@ -186,6 +241,21 @@ export function AttachControls({
                 );
               })}
             </div>
+            <label className="attachment-menu-switch">
+              <input
+                type="checkbox"
+                role="switch"
+                checked={shrink}
+                onChange={(event) => {
+                  setShrink(event.target.checked);
+                  writeCameraShrink(localStorage, event.target.checked);
+                }}
+              />
+              <span className="attachment-menu-copy">
+                <strong>{CAMERA_SHRINK_LABEL}</strong>
+                <span>{shrink ? CAMERA_SHRINK_HINT_ON : CAMERA_SHRINK_HINT_OFF}</span>
+              </span>
+            </label>
             <button type="button" className="btn-ghost attachment-menu-cancel" onClick={() => setOpen(false)}>
               Cancel
             </button>
