@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { AttachControls } from "@/components/casebook/attach";
+import { attachmentSelectionMessage } from "@/lib/casebook/attachment-menu";
 import { ExternalOpenNotice } from "@/components/casebook/external-notice";
 import { AttachmentRow } from "@/components/casebook/attachment-row";
 import { AttachmentCount } from "@/components/casebook/attachment-count";
@@ -46,7 +47,8 @@ function limitCopy() {
 }
 
 async function storeIncoming(existing: Attachment[], incoming: File[]) {
-  const { accepted, error } = acceptFiles(existing.length, incoming);
+  const { accepted, rejected } = acceptFiles(existing.length, incoming);
+  const error = attachmentSelectionMessage(accepted.length, rejected.map((item) => item.reason));
   const stored: Attachment[] = [];
   try {
     for (const file of accepted) {
@@ -620,7 +622,7 @@ function ConsultBlock({
             placeholder="Consult note"
           />
           <p className="limit-note">{limitCopy()}</p>
-          <AttachControls disabled={consult.attachments.length >= MAX_FILES} onFiles={(list) => void add(list)} />
+          <AttachControls remaining={MAX_FILES - consult.attachments.length} onFiles={(list) => void add(list)} />
           <FileList
             files={consult.attachments}
             onRemove={(id) =>
@@ -738,7 +740,7 @@ function SurgeryBlock({
             placeholder="Type the anaesthetic note"
           />
           <p className="limit-note">{limitCopy()}</p>
-          <AttachControls disabled={surgery.attachments.length >= MAX_FILES} onFiles={(list) => void add(list)} />
+          <AttachControls remaining={MAX_FILES - surgery.attachments.length} onFiles={(list) => void add(list)} />
           <FileList
             files={surgery.attachments}
             onRemove={(id) =>

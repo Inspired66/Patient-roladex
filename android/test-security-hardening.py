@@ -82,7 +82,7 @@ class WebAssetCheckTest(unittest.TestCase):
     def test_restore_picker_is_separate_and_attachment_rules_remain_strict(self) -> None:
         source = (Path(__file__).parent / "src/com/vellum/casebook/MainActivity.java").read_text(encoding="utf-8")
         self.assertIn('case "armRestorePicker":', source)
-        self.assertIn('case "armRestorePicker":\n      case "readList":', source)
+        self.assertIn('case "armRestorePicker":\n      case "armAttachmentPicker":\n      case "readList":', source)
         self.assertIn("NativeRestorePickerPolicy.isValidPayload", source)
         self.assertIn("restorePickerArm.consume(SystemClock.elapsedRealtime())", source)
         self.assertIn("new Intent(Intent.ACTION_OPEN_DOCUMENT)", source)
@@ -128,6 +128,39 @@ class WebAssetCheckTest(unittest.TestCase):
         )
         paths = (root / "res/xml/file_paths.xml").read_text(encoding="utf-8")
         self.assertIn('path="open/"', paths)
+
+    def test_attachment_menu_picker_purposes_stay_narrow(self) -> None:
+        root = Path(__file__).parent
+        source = (root / "src/com/vellum/casebook/MainActivity.java").read_text(encoding="utf-8")
+        policy = (root / "src/com/vellum/casebook/NativeAttachmentPickerPolicy.java").read_text(encoding="utf-8")
+        for purpose in ("files", "photos", "camera", "recorder"):
+            self.assertIn(f'"{purpose}"', policy)
+        self.assertIn('case "armAttachmentPicker":', source)
+        self.assertIn("NativeAttachmentPickerPolicy.isValidRequest", source)
+        self.assertIn("attachmentPickerArm.consume(SystemClock.elapsedRealtime())", source)
+        self.assertIn("Intent.ACTION_OPEN_DOCUMENT", source)
+        self.assertIn("Intent.EXTRA_MIME_TYPES", source)
+        self.assertIn("MediaStore.ACTION_PICK_IMAGES", source)
+        self.assertIn('intent.setType("image/*")', source)
+        self.assertIn("MediaStore.Audio.Media.RECORD_SOUND_ACTION", source)
+        self.assertIn("NativeAttachmentPolicy.isAllowedType(mime, name)", source)
+        self.assertIn("NativeAttachmentPolicy.isAllowedSize(size)", source)
+        picker = source.split("private void launchAttachmentPicker(", 1)[1].split(
+            "\n  private ", 1
+        )[0]
+        self.assertNotIn("FLAG_GRANT_PERSISTABLE_URI_PERMISSION", picker)
+        manifest = (root / "AndroidManifest.xml").read_text(encoding="utf-8")
+        permissions = sorted(re.findall(r'uses-permission android:name="([^"]+)"', manifest))
+        self.assertEqual(
+            permissions,
+            sorted(
+                [
+                    "android.permission.CAMERA",
+                    "android.permission.INTERNET",
+                    "android.permission.RECORD_AUDIO",
+                ]
+            ),
+        )
 
     def test_android_build_uses_pinned_webkit_and_scans_packaged_assets(self) -> None:
         build = Path(__file__).with_name("build-apk.sh").read_text(encoding="utf-8")

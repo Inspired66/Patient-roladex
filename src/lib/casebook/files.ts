@@ -15,27 +15,27 @@ export function fileLimitLabel() {
 
 export function acceptFiles(existing: number, incoming: File[]) {
   const accepted: File[] = [];
-  let error = "";
+  const rejected: Array<{ file: File; reason: string }> = [];
   for (const file of incoming) {
     if (existing + accepted.length >= MAX_FILES) {
-      error = `Up to ${MAX_FILES} attachments.`;
-      break;
+      rejected.push({ file, reason: `Up to ${MAX_FILES} attachments.` });
+      continue;
     }
     if (file.size > MAX_FILE_BYTES) {
-      error = `Each attachment must be ${fileLimitLabel()} or smaller.`;
+      rejected.push({ file, reason: `Each attachment must be ${fileLimitLabel()} or smaller.` });
       continue;
     }
     if (file.size <= 0) {
-      error = "That file was empty.";
+      rejected.push({ file, reason: "That file was empty." });
       continue;
     }
     if (!isSupportedAttachmentMetadata(file.name, file.type)) {
-      error = "Choose an image, audio recording, PDF, or plain-text file.";
+      rejected.push({ file, reason: "Choose an image, audio recording, PDF, or plain-text file." });
       continue;
     }
     accepted.push(file);
   }
-  return { accepted, error };
+  return { accepted, rejected, error: rejected.at(-1)?.reason ?? "" };
 }
 
 const ALLOWED_MIME_TYPES = new Set([

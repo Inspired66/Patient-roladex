@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AttachControls } from "@/components/casebook/attach";
+import { attachmentSelectionMessage } from "@/lib/casebook/attachment-menu";
 import { acceptFiles, deleteBlob, fileLimitLabel, MAX_FILES, MAX_RECORDING_SECONDS, putBlob } from "@/lib/casebook/files";
 import { choiceNames, displayName, formatBytes, given, joinName, knownHospitals, knownSurgeons, surname, todayISO } from "@/lib/casebook/format";
 import { useBackLayer } from "@/lib/casebook/back";
@@ -302,9 +303,8 @@ export function SurgeryForm({
 
   function addFiles(list: FileList | File[] | null) {
     if (!list) return;
-    const { accepted, error: nextError } = acceptFiles(files.length, Array.from(list));
-    if (nextError) setError(nextError);
-    else setError("");
+    const { accepted, rejected } = acceptFiles(files.length, Array.from(list));
+    setError(attachmentSelectionMessage(accepted.length, rejected.map((item) => item.reason)));
     setFiles((current) => [
       ...current,
       ...accepted.map((file) => ({ key: crypto.randomUUID(), file, url: URL.createObjectURL(file) })),
@@ -404,7 +404,7 @@ export function SurgeryForm({
                 {String(MAX_RECORDING_SECONDS % 60).padStart(2, "0")}.
               </p>
             </div>
-            <AttachControls disabled={files.length >= MAX_FILES} onFiles={(list) => addFiles(list)} />
+            <AttachControls remaining={MAX_FILES - files.length} onFiles={(list) => addFiles(list)} />
               {files.map((pending) => (
                 <div className="file-row" key={pending.key}>
                   {pending.file.type.startsWith("image/") ? (

@@ -1,11 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 
 const stack: Array<() => void> = [];
 
 export function useBackLayer(active: boolean, close: () => void) {
   const closeRef = useRef(close);
   closeRef.current = close;
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!active) return;
     const closeLayer = () => closeRef.current();
     stack.unshift(closeLayer);

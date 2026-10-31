@@ -41,5 +41,23 @@ test("stops accepting files at the attachment count limit", () => {
   const incoming = Array.from({ length: 2 }, (_, index) => file(`${index}.txt`, "text/plain"));
   const result = acceptFiles(MAX_FILES - 1, incoming);
   assert.equal(result.accepted.length, 1);
+  assert.equal(result.rejected.length, 1);
+  assert.equal(result.rejected[0].file.name, "1.txt");
   assert.match(result.error, /Up to 8 attachments/);
+});
+
+test("keeps valid files when another selected file is refused", () => {
+  const result = acceptFiles(0, [
+    file("good.pdf", "application/pdf"),
+    file("too-big.pdf", "application/pdf", MAX_FILE_BYTES + 1),
+    file("bad.exe", "application/octet-stream"),
+  ]);
+  assert.deepEqual(result.accepted.map((item) => item.name), ["good.pdf"]);
+  assert.deepEqual(
+    result.rejected.map(({ file: rejected, reason }) => [rejected.name, reason]),
+    [
+      ["too-big.pdf", "Each attachment must be 4 MB or smaller."],
+      ["bad.exe", "Choose an image, audio recording, PDF, or plain-text file."],
+    ],
+  );
 });

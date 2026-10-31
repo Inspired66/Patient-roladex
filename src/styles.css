@@ -213,6 +213,76 @@
   gap: 0.45rem;
   margin-top: 0.65rem;
 }
+.attach-trigger {
+  min-height: 3rem;
+  gap: 0.55rem;
+}
+.attach-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+.attach-limit-note {
+  max-width: 22rem;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+.attach-message {
+  max-width: 100%;
+  margin: 0;
+}
+.attachment-menu-wrap {
+  z-index: 60;
+}
+.attachment-menu {
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom));
+}
+.attachment-menu-options {
+  display: grid;
+  gap: 0.4rem;
+}
+.attachment-menu-option {
+  display: flex;
+  width: 100%;
+  min-height: 3.5rem;
+  align-items: center;
+  gap: 0.8rem;
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  padding: 0.55rem 0.75rem;
+  background: transparent;
+  color: var(--color-ink);
+  text-align: left;
+}
+.attachment-menu-option > svg {
+  flex: 0 0 auto;
+  color: var(--color-accent);
+}
+.attachment-menu-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+}
+.attachment-menu-copy strong {
+  font-size: 0.98rem;
+  font-weight: 650;
+}
+.attachment-menu-copy > span {
+  color: var(--color-muted);
+  font-size: 0.82rem;
+  line-height: 1.25;
+}
+.attachment-menu-option:focus-visible,
+.attachment-menu-cancel:focus-visible {
+  outline: 3px solid var(--color-accent);
+  outline-offset: 2px;
+}
+.attachment-menu-cancel {
+  width: 100%;
+  min-height: 3rem;
+  margin-top: 0.55rem;
+}
 .file-proxy {
   position: fixed;
   left: 0;

@@ -109,6 +109,9 @@ public class MainActivity extends Activity {
   private final Object saveLock = new Object();
   private final Set<String> pickerUris = Collections.synchronizedSet(new HashSet<>());
   private final NativeRestorePickerPolicy.Arm restorePickerArm = new NativeRestorePickerPolicy.Arm();
+  private final NativeAttachmentPickerPolicy.Arm attachmentPickerArm =
+      new NativeAttachmentPickerPolicy.Arm();
+  private int attachmentPickerMaxItems = NativeAttachmentPolicy.MAX_FILES;
   private String saveName = "vellum.csv";
   private NativeOpenPolicy.Transfer openTransfer;
   private Uri openUri;
@@ -205,7 +208,12 @@ public class MainActivity extends Activity {
         upload = callback;
         try {
           if (restorePickerArm.consume(SystemClock.elapsedRealtime())) launchRestoreChooser();
-          else launchNativeChooser();
+          else {
+            NativeAttachmentPickerPolicy.Request request =
+                attachmentPickerArm.consume(SystemClock.elapsedRealtime());
+            if (request == null) launchNativeChooser();
+            else launchAttachmentPicker(request);
+          }
         } catch (Exception error) {
           finishUpload(null);
         }
@@ -365,6 +373,9 @@ public class MainActivity extends Activity {
         case "armRestorePicker":
           armRestorePicker(id, payload);
           break;
+        case "armAttachmentPicker":
+          armAttachmentPicker(id, payload);
+          break;
         case "readList":
           readList(id);
           break;
@@ -466,6 +477,7 @@ public class MainActivity extends Activity {
       case "endMicrophoneCapture":
       case "requestCamera":
       case "armRestorePicker":
+      case "armAttachmentPicker":
       case "readList":
       case "beginSave":
       case "writeChunk":
@@ -1184,6 +1196,100 @@ public class MainActivity extends Activity {
     }
   }
 
+  private void armAttachmentPicker(String requestId, JSONObject payload) {
+    Object rawPurpose = payload == null ? null : payload.opt("purpose");
+    Object rawMaxItems = payload == null ? null : payload.opt("maxItems");
+    String purpose = rawPurpose instanceof String ? (String) rawPurpose : null;
+    long rawCount = rawMaxItems instanceof Number ? ((Number) rawMaxItems).longValue() : -1;
+    int maxItems = rawCount >= Integer.MIN_VALUE && rawCount <= Integer.MAX_VALUE ? (int) rawCount : -1;
+    Uri page = webView == null || webView.getUrl() == null ? null : Uri.parse(webView.getUrl());
+    if (payload == null
+        || payload.length() != 2
+        || !(rawMaxItems instanceof Integer || rawMaxItems instanceof Long)
+        || !NativeAttachmentPickerPolicy.isValidRequest(
+            page == null ? null : page.getScheme(),
+            page == null ? null : page.getHost(),
+            page == null ? -1 : page.getPort(),
+            purpose,
+            maxItems)
+        || !attachmentPickerArm.arm(purpose, maxItems, SystemClock.elapsedRealtime())) {
+      sendNativeError(requestId, "The attachment picker request is invalid.");
+      return;
+    }
+    JSONObject result = new JSONObject();
+    try {
+      result.put("armed", true);
+      sendNativeResult(requestId, result);
+    } catch (JSONException error) {
+      attachmentPickerArm.clear();
+      sendNativeError(requestId, "The attachment picker could not be prepared.");
+    }
+  }
+
+  private void launchAttachmentPicker(NativeAttachmentPickerPolicy.Request request) {
+    dropCameraOutput();
+    pickerUris.clear();
+    attachmentPickerMaxItems = request.maxItems;
+    try {
+      switch (request.purpose) {
+        case NativeAttachmentPickerPolicy.FILES: {
+          Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+          intent.addCategory(Intent.CATEGORY_OPENABLE);
+          intent.setType("*/*");
+          intent.putExtra(
+              Intent.EXTRA_MIME_TYPES,
+              new String[] {
+                "image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif",
+                "image/bmp", "audio/mpeg", "audio/mp4", "audio/aac", "audio/wav", "audio/x-wav",
+                "audio/ogg", "audio/webm", "audio/3gpp", "audio/amr", "application/pdf", "text/plain"
+              });
+          intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+          intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+          startActivityForResult(intent, FILE_REQ);
+          return;
+        }
+        case NativeAttachmentPickerPolicy.PHOTOS: {
+          Intent intent;
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent = new Intent(MediaStore.ACTION_PICK_IMAGES);
+            intent.putExtra(MediaStore.EXTRA_PICK_IMAGES_MAX, request.maxItems);
+          } else {
+            intent = new Intent(Intent.ACTION_GET_CONTENT);
+            intent.addCategory(Intent.CATEGORY_OPENABLE);
+            intent.setType("image/*");
+            intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+          }
+          intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+          startActivityForResult(intent, FILE_REQ);
+          return;
+        }
+        case NativeAttachmentPickerPolicy.CAMERA:
+          if (!launchCamera()) {
+            showAttachmentError("This phone could not open the camera.");
+            finishUpload(null);
+          }
+          return;
+        case NativeAttachmentPickerPolicy.RECORDER: {
+          Intent intent = new Intent(MediaStore.Audio.Media.RECORD_SOUND_ACTION);
+          startActivityForResult(intent, FILE_REQ);
+          return;
+        }
+        default:
+          showAttachmentError("That attachment option is not available.");
+          finishUpload(null);
+      }
+    } catch (ActivityNotFoundException error) {
+      showAttachmentError(
+          NativeAttachmentPickerPolicy.CAMERA.equals(request.purpose)
+              ? "This phone has no camera app available."
+              : NativeAttachmentPickerPolicy.RECORDER.equals(request.purpose)
+                  ? "This phone has no voice recorder app available."
+                  : "This phone has no app that can select that type of file.");
+      dropCameraOutput();
+      finishUpload(null);
+    }
+  }
+
   private void launchRestoreChooser() {
     Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
     intent.addCategory(Intent.CATEGORY_OPENABLE);
@@ -1488,6 +1594,27 @@ public class MainActivity extends Activity {
       if (problem != null) return problem;
     }
     return null;
+  }
+
+  private String attachmentSelectionMessage(int acceptedCount, List<String> refusedReasons) {
+    if (refusedReasons.isEmpty()) return null;
+    List<String> uniqueReasons = new ArrayList<>();
+    for (String reason : refusedReasons) {
+      if (!uniqueReasons.contains(reason)) uniqueReasons.add(reason);
+    }
+    StringBuilder message = new StringBuilder();
+    if (acceptedCount > 0) {
+      message.append("Added ").append(acceptedCount).append(acceptedCount == 1 ? " file. " : " files. ");
+    } else {
+      message.append("No files were added. ");
+    }
+    message.append(refusedReasons.size())
+        .append(refusedReasons.size() == 1 ? " file was not added. " : " files were not added. ");
+    for (String reason : uniqueReasons) {
+      message.append(reason).append(' ');
+    }
+    if (acceptedCount > 0) message.append("Accepted files are shown below.");
+    return message.toString().trim();
   }
 
   private String attachmentError(Uri uri) {
@@ -1915,17 +2042,36 @@ public class MainActivity extends Activity {
         finishUpload(null);
       } else {
         Uri[] selected = collectPickedUris(data);
-        String problem = selected == null ? "Choose an attachment to continue." : attachmentError(Arrays.asList(selected));
-        if (problem != null) {
-          showAttachmentError(problem);
+        List<Uri> accepted = new ArrayList<>();
+        List<String> refusedReasons = new ArrayList<>();
+        if (selected != null) {
+          for (Uri uri : selected) {
+            if (accepted.size() >= attachmentPickerMaxItems) {
+              refusedReasons.add(attachmentPickerMaxItems == 1
+                  ? "You can add only one more attachment."
+                  : "You can add up to " + attachmentPickerMaxItems + " more attachments.");
+              continue;
+            }
+            String problem = attachmentError(uri);
+            if (problem == null) accepted.add(uri);
+            else refusedReasons.add(problem);
+          }
+        }
+        String selectionMessage = selected == null
+            ? "Choose an attachment to continue."
+            : attachmentSelectionMessage(accepted.size(), refusedReasons);
+        attachmentPickerMaxItems = NativeAttachmentPolicy.MAX_FILES;
+        if (selectionMessage != null && accepted.isEmpty()) {
+          showAttachmentError(selectionMessage);
           dropCameraOutput();
           finishUpload(null);
         } else {
-          for (Uri uri : selected) {
+          if (selectionMessage != null) showAttachmentError(selectionMessage);
+          for (Uri uri : accepted) {
             pickerUris.add(uri.toString());
             if (VellumFileProvider.isRegistered(uri)) VellumFileProvider.markReady(uri);
           }
-          finishUpload(selected);
+          finishUpload(accepted.toArray(new Uri[0]));
         }
       }
       return;
@@ -1951,18 +2097,19 @@ public class MainActivity extends Activity {
           if (problem == null) {
             VellumFileProvider.markReady(taken);
             pickerUris.add(taken.toString());
-            upload.onReceiveValue(new Uri[] {taken});
+            finishUpload(new Uri[] {taken});
           } else {
             showAttachmentError(problem);
             dropCameraOutput();
-            upload.onReceiveValue(null);
+            finishUpload(null);
           }
         } else {
           dropCameraOutput();
-          upload.onReceiveValue(null);
+          finishUpload(null);
         }
         upload = null;
       }
+      attachmentPickerMaxItems = NativeAttachmentPolicy.MAX_FILES;
     }
     if (requestCode == PICK_REQ) {
       if (resultCode != RESULT_OK) {
@@ -2090,6 +2237,7 @@ public class MainActivity extends Activity {
   @Override
   protected void onPause() {
     restorePickerArm.clear();
+    attachmentPickerArm.clear();
     if (openTransfer != null) openTransfer.cancel();
     micCaptureArmed = false;
     micCaptureActive = false;
