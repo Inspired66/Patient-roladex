@@ -274,3 +274,10 @@ Gates per batch: `npm run typecheck`, `npm run lint`, `npm test`, and `android/b
 
 - `GeneralNotes` in `detail.tsx` is now a `section-head` heading, a dropdown button (date line + two-line clipped preview, built by `notesButtonModel`) and a read-only attachment list (`patientAttachmentList` + `attachmentRowModel`). It sits where the notes were, above History.
 - Tapping a row: images open the existing lightbox, audio shows the existing inline player, Not restored rows show the shared message, PDFs and text files show a short "cannot be opened in the app yet" message (chunk 2c replaces the PDF behaviour).
+
+## Chunk 2c-1: shared attachment opener (web layer)
+
+- `src/lib/casebook/attachment-open.ts` holds the pure logic. `openAttachment(file)` is the only opener and dispatches by kind: images open in the lightbox, audio in the inline player, `text/plain` (and `.txt`) in an in-app text viewer, and PDF and every other type go to the placeholder `openExternally({ id, name, mime, size })`. That function returns `{ outcome: "opened" | "no-app" | "refused" | "unavailable", message }`, so chunk 2c-2 can replace its body without touching callers.
+- `src/components/casebook/attachment-row.tsx` is the single row used by General notes, procedure and consult lists. The whole row is one tap target (48 px). Remove sits on its own line below the row, behind a confirm.
+- The text viewer reads only on tap, caps at 200 KB, uses `<pre>` text only, says when the file is cut off, and decodes invalid UTF-8 with replacement characters. Viewers render in a portal on `document.body`.
+- Not restored files make no blob read. HEIC/HEIF go to `openExternally` because the WebView cannot draw them. CSV is not an allowed attachment type, so it is not treated as text.

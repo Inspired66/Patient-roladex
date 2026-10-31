@@ -1,15 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronLeft, ChevronRight, File, FileText, Image as ImageIcon, Music, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { AttachControls } from "@/components/casebook/attach";
+import { AttachmentRow } from "@/components/casebook/attachment-row";
 import { AttachmentCount } from "@/components/casebook/attachment-count";
 import { Confirm } from "@/components/casebook/forms";
-import { acceptFiles, deleteBlob, fileLimitLabel, getBlob, MAX_FILES, MAX_RECORDING_SECONDS, putBlob } from "@/lib/casebook/files";
-import { ageLabel, attachmentDetail, displayName, formatBytes, formatDob, patientTimeline, todayISO } from "@/lib/casebook/format";
+import { acceptFiles, deleteBlob, fileLimitLabel, MAX_FILES, MAX_RECORDING_SECONDS, putBlob } from "@/lib/casebook/files";
+import { ageLabel, displayName, formatDob, patientTimeline, todayISO } from "@/lib/casebook/format";
 import {
   attachmentRowModel,
   notesButtonModel,
   patientAttachmentList,
-  type AttachmentRowModel,
 } from "@/lib/casebook/detail-data";
 import { useBackLayer } from "@/lib/casebook/back";
 import { useCasebook } from "@/lib/casebook/store";
@@ -515,85 +515,15 @@ function GeneralNotes({ patient }: { patient: Patient }) {
         <p className="lbl">Attachments{files.length ? ` (${files.length})` : ""}</p>
         {files.length === 0 ? <p className="slip-who">No attachments yet.</p> : null}
         {files.map((entry) => (
-          <AttachmentListRow key={entry.file.id} model={attachmentRowModel(entry)} />
+          <AttachmentRow
+            key={entry.file.id}
+            file={entry.file}
+            lines={attachmentRowModel(entry).lines}
+            ariaLabel={attachmentRowModel(entry).ariaLabel}
+          />
         ))}
       </div>
     </>
-  );
-}
-
-const KIND_ICON = { image: ImageIcon, audio: Music, pdf: FileText, text: FileText, other: File } as const;
-
-function AttachmentListRow({ model }: { model: AttachmentRowModel }) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [shown, setShown] = useState(false);
-  const [notice, setNotice] = useState("");
-  const Icon = KIND_ICON[model.kind];
-
-  useEffect(
-    () => () => {
-      if (url) URL.revokeObjectURL(url);
-    },
-    [url],
-  );
-
-  async function activate() {
-    if (model.action === "message") {
-      setNotice((value) => (value ? "" : model.message));
-      return;
-    }
-    if (shown && model.action === "audio") {
-      setShown(false);
-      return;
-    }
-    setNotice("");
-    try {
-      let next = url;
-      if (!next) {
-        const blob = await getBlob(model.id);
-        if (!blob) {
-          setNotice("This file could not be found on this phone.");
-          return;
-        }
-        next = URL.createObjectURL(blob);
-        setUrl(next);
-      }
-      setShown(true);
-    } catch {
-      setNotice("This file could not be opened.");
-    }
-  }
-
-  return (
-    <div className="file-block">
-      <button
-        type="button"
-        className="file-open"
-        aria-label={model.ariaLabel}
-        aria-expanded={model.action === "audio" ? shown : undefined}
-        onClick={() => void activate()}
-      >
-        <span className="file-icon" aria-hidden>
-          <Icon />
-        </span>
-        <span className="file-name">
-          <p>{model.name}</p>
-          <span>{[model.missing ? "Not restored" : "", model.sizeLabel, model.addedLabel].filter(Boolean).join(" · ")}</span>
-          <span>{model.ownerLabel}</span>
-        </span>
-      </button>
-      {notice ? (
-        <p className="slip-who" role="status">
-          {notice}
-        </p>
-      ) : null}
-      {shown && url && model.action === "audio" ? <audio className="file-audio" controls src={url} preload="none" /> : null}
-      {shown && url && model.action === "image" ? (
-        <div className="lightbox" onClick={() => setShown(false)} role="presentation">
-          <img src={url} alt={model.name} />
-        </div>
-      ) : null}
-    </div>
   );
 }
 
@@ -839,93 +769,5 @@ function FileList({ files, onRemove }: { files: Attachment[]; onRemove: (id: str
         <AttachmentRow key={file.id} file={file} onRemove={() => onRemove(file.id)} />
       ))}
     </>
-  );
-}
-
-function AttachmentRow({ file, onRemove }: { file: Attachment; onRemove: () => void }) {
-  const [url, setUrl] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
-  const image = file.mime.startsWith("image/");
-  const [notice, setNotice] = useState("");
-  const missing = Boolean(file.notRestored);
-  const audio = file.mime.startsWith("audio/") || /\.(webm|m4a|mp3|wav|ogg)$/i.test(file.name);
-
-  useEffect(() => {
-    let cancelled = false;
-    let created = "";
-    if (missing) return;
-    void getBlob(file.id)
-      .then((blob) => {
-        if (!blob || cancelled) return;
-        created = URL.createObjectURL(blob);
-        setUrl(created);
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-      if (created) URL.revokeObjectURL(created);
-    };
-  }, [file.id, missing]);
-
-  if (missing) {
-    return (
-      <div className="file-block">
-        <div className="file-row">
-          <button
-            type="button"
-            className="file-icon"
-            aria-label={`${file.name}, not restored`}
-            onClick={() =>
-              setNotice(
-                "This file was not included in the backup, so it is not on this phone. Restore a backup that includes files, or attach it again.",
-              )
-            }
-          >
-            <FileText />
-          </button>
-          <div className="file-name">
-            <p>{file.name}</p>
-            <span>{attachmentDetail(file)}</span>
-          </div>
-          <button type="button" className="btn-text danger" onClick={onRemove}>
-            Remove
-          </button>
-        </div>
-        {notice ? (
-          <p className="slip-who" role="status">
-            {notice}
-          </p>
-        ) : null}
-      </div>
-    );
-  }
-
-  return (
-    <div className="file-block">
-      <div className="file-row">
-        {image && url ? (
-          <button type="button" className="thumb-btn" onClick={() => setOpen(true)} aria-label={`View ${file.name}`}>
-            <img src={url} alt="" />
-          </button>
-        ) : (
-          <span className="file-icon" aria-hidden>
-            <FileText />
-          </span>
-        )}
-        <div className="file-name">
-          <p>{file.name}</p>
-          <span>{formatBytes(file.size)}</span>
-        </div>
-        <button type="button" className="btn-text danger" onClick={onRemove}>
-          Remove
-        </button>
-      </div>
-      {audio && url ? <audio className="file-audio" controls src={url} preload="none" /> : null}
-      {open && url ? (
-        <div className="lightbox" onClick={() => setOpen(false)} role="presentation">
-          <img src={url} alt={file.name} />
-        </div>
-      ) : null}
-    </div>
   );
 }

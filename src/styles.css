@@ -1408,7 +1408,7 @@ a.card-contact span {
 .notes-files {
   margin-top: 0.9rem;
 }
-.notes-files .file-open {
+.file-open {
   display: flex;
   width: 100%;
   min-height: 3rem;
@@ -1421,26 +1421,32 @@ a.card-contact span {
   font: inherit;
   text-align: left;
 }
-.notes-files .file-name {
+.file-row .file-name {
   display: block;
   min-width: 0;
   flex: 1;
 }
-.notes-files .file-name span {
+.file-row .file-name span {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.notes-files .file-name p {
+.file-row .file-name p {
+  display: -webkit-box;
   margin: 0;
   overflow: hidden;
+  overflow-wrap: anywhere;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
-.notes-files .file-name span {
+.file-row .file-name span {
   color: var(--color-ink-muted);
   font-size: 0.75rem;
+  white-space: normal;
 }
 .notes-tile .tile-copy .slip-date,
 .notes-tile .tile-copy .slip-who {
@@ -1450,6 +1456,62 @@ a.card-contact span {
   text-overflow: clip;
   white-space: normal;
 }
-.notes-files .file-name span {
+.file-row .file-name span {
   white-space: normal;
+}
+.file-open {
+  flex: 1;
+  min-width: 0;
+}
+.file-row {
+  flex-wrap: wrap;
+  margin-top: 0.2rem;
+}
+.file-remove {
+  min-height: 2.75rem;
+  flex: 0 0 100%;
+  justify-content: flex-end;
+  border-top: 1px solid var(--color-line);
+  border-radius: 0;
+  padding: 0 0.2rem;
+}
+.text-panel {
+  display: flex;
+  width: min(100%, 40rem);
+  max-height: 100%;
+  flex-direction: column;
+  gap: 0.6rem;
+  border-radius: 12px;
+  background: #fffcf8;
+  padding: 0.8rem;
+  color: var(--color-ink);
+}
+.text-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.text-panel-head p {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.text-panel-head .btn-ghost {
+  min-height: 2.75rem;
+  flex: none;
+}
+.text-body {
+  min-height: 0;
+  flex: 1;
+  margin: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82rem;
+  line-height: 1.45;
 }

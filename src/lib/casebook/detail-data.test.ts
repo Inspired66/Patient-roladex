@@ -508,7 +508,7 @@ test("a bare calendar date is shown as that local day, not shifted", () => {
   assert.equal(formatNotesDate("2026-01-10"), "10 JAN 2026");
 });
 
-test("row model: icon kind, labels and actions by file type", () => {
+test("row model: icon kind and labels by file type", () => {
   const entry = (name: string, mime: string, extra: object = {}) => ({
     file: { id: name, name, mime, size: 2048, ...extra },
     ownerKind: "procedure" as const,
@@ -519,21 +519,16 @@ test("row model: icon kind, labels and actions by file type", () => {
     missing: Boolean((extra as { notRestored?: unknown }).notRestored),
   });
   const img = attachmentRowModel(entry("a.jpg", "image/jpeg"));
-  assert.deepEqual(
-    [img.kind, img.action, img.sizeLabel, img.ownerLabel],
-    ["image", "image", "2 KB", "Knee"],
-  );
+  assert.deepEqual([img.kind, img.sizeLabel, img.ownerLabel], ["image", "2 KB", "Knee"]);
+  assert.deepEqual(img.lines, ["2 KB · Added 1 FEB 2026", "Knee"]);
+  assert.equal(img.ariaLabel, "Open a.jpg, Image, 2 KB, Added 1 FEB 2026, Knee");
   assert.equal(img.addedLabel, "Added 1 FEB 2026");
-  assert.equal(attachmentRowModel(entry("v.m4a", "")).action, "audio");
+  assert.equal(attachmentRowModel(entry("v.m4a", "")).kind, "audio");
   const pdf = attachmentRowModel(entry("r.pdf", "application/pdf"));
-  assert.deepEqual([pdf.kind, pdf.action], ["pdf", "message"]);
-  assert.match(pdf.message, /PDF/);
+  assert.equal(pdf.kind, "pdf");
+  assert.match(pdf.ariaLabel, /^Open r\.pdf, PDF, 2 KB/);
   assert.equal(attachmentRowModel(entry("n.txt", "text/plain")).kind, "text");
   assert.equal(attachmentKind({ name: "x.bin", mime: "application/octet-stream" }), "other");
-  assert.match(
-    attachmentRowModel(entry("x.bin", "application/octet-stream")).message,
-    /cannot be opened/,
-  );
 });
 
 test("row model: Not restored files never try to open and carry the shared message", () => {
@@ -552,10 +547,10 @@ test("row model: Not restored files never try to open and carry the shared messa
     addedAt: "2026-03-01",
     missing: true,
   });
-  assert.equal(m.action, "message");
-  assert.equal(m.message, NOT_RESTORED_MESSAGE);
+  assert.equal(NOT_RESTORED_MESSAGE.startsWith("This file was not included"), true);
+  assert.match(m.lines[0], /^Not restored/);
   assert.equal(m.addedLabel, "Added 1 MAR 2026");
-  assert.match(m.ariaLabel, /Not restored/);
+  assert.match(m.ariaLabel, /not restored/);
 });
 
 test("row model: no valid date gives no Added label; list order comes from the helper", () => {
