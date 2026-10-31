@@ -222,12 +222,23 @@ print("packed", apk)
 PY
 "$BT/zipalign" -p -f 4 "$WORK/unsigned.apk" "$WORK/aligned.apk"
 
-if [ ! -f "$WORK/debug.keystore" ]; then
-  keytool -genkeypair -keystore "$WORK/debug.keystore" -storepass android -keypass android \
-    -alias vellum -keyalg RSA -keysize 2048 -validity 10000 \
-    -dname "CN=Vellum Casebook, OU=Vellum, O=Vellum, C=AU"
+# The debug keystore lives outside the repo and /tmp so every build is signed with the same key
+# and installs over the previous one. Never commit it.
+KS_DIR="${VELLUM_KEYSTORE_DIR:-$HOME/.vellum}"
+KS="$KS_DIR/debug.keystore"
+if [ ! -f "$KS" ]; then
+  mkdir -p "$KS_DIR"
+  chmod 700 "$KS_DIR"
+  if [ -f "$WORK/debug.keystore" ]; then
+    cp "$WORK/debug.keystore" "$KS"
+  else
+    VELLUM_KS_PASS=android keytool -genkeypair -keystore "$KS" -storepass:env VELLUM_KS_PASS -keypass:env VELLUM_KS_PASS \
+      -alias vellum -keyalg RSA -keysize 2048 -validity 10000 \
+      -dname "CN=Vellum Casebook, OU=Vellum, O=Vellum, C=AU"
+  fi
+  chmod 600 "$KS"
 fi
-"$BT/apksigner" sign --ks "$WORK/debug.keystore" --ks-pass pass:android --key-pass pass:android \
+VELLUM_KS_PASS=android "$BT/apksigner" sign --ks "$KS" --ks-pass env:VELLUM_KS_PASS --key-pass env:VELLUM_KS_PASS \
   --ks-key-alias vellum --out "$OUT" "$WORK/aligned.apk"
 "$BT/apksigner" verify --verbose "$OUT"
 echo "Wrote $OUT"
