@@ -524,6 +524,8 @@ test("row model: icon kind and labels by file type", () => {
   assert.equal(img.ariaLabel, "Open a.jpg, Image, 2 KB, Added 1 FEB 2026, Knee");
   assert.equal(img.addedLabel, "Added 1 FEB 2026");
   assert.equal(attachmentRowModel(entry("v.m4a", "")).kind, "audio");
+  assert.match(attachmentRowModel(entry("v.m4a", "")).lines[0], /^Audio · M4A · 2 KB/);
+  assert.match(attachmentRowModel(entry("v.amr", "audio/3gpp")).lines[0], /^Audio · AMR · 2 KB/);
   const pdf = attachmentRowModel(entry("r.pdf", "application/pdf"));
   assert.equal(pdf.kind, "pdf");
   assert.match(pdf.ariaLabel, /^Open r\.pdf, PDF, 2 KB/);

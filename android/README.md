@@ -125,3 +125,5 @@ There is currently no manually verified real-document set in this repository. Do
 ## Opening attachments in another app
 
 PDFs and other types the WebView cannot show are copied (in bounded chunks over the origin-verified bridge, `NativeOpenPolicy`) to `cache/open/<token>/vellum-file.<ext>` and offered through a chooser with a read-only URI grant. The provider stays non-exported. The copy is deleted on the next open, on resume, on app start and on destroy. The manifest has `<queries>` VIEW entries (pdf, image, audio, text) for Android 11+ package visibility; no permission was added.
+
+Audio attachments use the WebView player only when its `canPlayType` check accepts the format. AMR and 3GPP recordings skip the player and offer an explicit “Open in another app” action; the audio MIME is passed unchanged to the native chooser. Handoff also recognizes `audio/3gpp2` and `audio/x-amr` without allowing them as new attachments. An audio playback error uses the same fallback. The inline player is at least 48 px tall, and its object URL is released when the player closes or the row unmounts.

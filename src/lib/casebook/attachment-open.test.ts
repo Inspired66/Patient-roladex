@@ -2,8 +2,16 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  audioBlobForAttachment,
+  audioFormatLabel,
+  audioMimeForAttachment,
+  canPlayAudioInWebView,
+  isWebViewUnplayableAudio,
+} from "./audio-format.ts";
+import {
   attachmentKind,
   attachmentOpenLabel,
+  AUDIO_UNPLAYABLE_MESSAGE,
   BROWSER_ONLY_MESSAGE,
   EMPTY_TEXT_MESSAGE,
   MISSING_FILE_MESSAGE,
@@ -11,6 +19,7 @@ import {
   OPEN_FAILED_MESSAGE,
   openAttachment,
   openExternally,
+  externalMime,
   readTextPreview,
   TEXT_PREVIEW_BYTES,
   type OpenDeps,
@@ -65,8 +74,97 @@ test("images and audio return the blob; reads happen only on open", async () => 
   const { d, calls } = deps({ "id-a.jpg": blob, "id-v.m4a": blob });
   assert.equal(calls.reads.length, 0);
   assert.deepEqual(await openAttachment(file("a.jpg", "image/jpeg"), d), { type: "image", blob });
-  assert.deepEqual(await openAttachment(file("v.m4a", ""), d), { type: "audio", blob });
+  const audio = await openAttachment(file("v.m4a", ""), d);
+  assert.equal(audio.type, "audio");
+  if (audio.type === "audio") {
+    assert.equal(audio.blob.type, "audio/mp4");
+    assert.equal(await audio.blob.text(), "x");
+  }
   assert.deepEqual(calls.reads, ["id-a.jpg", "id-v.m4a"]);
+});
+
+test("audio blob MIME is retained or derived from the filename", () => {
+  const formats = [
+    ["clip.m4a", "audio/mp4"],
+    ["clip.mp3", "audio/mpeg"],
+    ["clip.wav", "audio/wav"],
+    ["clip.ogg", "audio/ogg"],
+    ["clip.webm", "audio/webm"],
+    ["clip.3gp", "audio/3gpp"],
+    ["clip.3gpp", "audio/3gpp"],
+    ["clip.amr", "audio/amr"],
+    ["clip.aac", "audio/aac"],
+  ] as const;
+  for (const [name, mime] of formats) {
+    for (const storedMime of ["", "application/octet-stream"]) {
+      assert.equal(audioMimeForAttachment(name, storedMime), mime);
+      assert.equal(audioBlobForAttachment(new Blob(["bytes"]), name, storedMime).type, mime);
+    }
+    const upperName = name.toUpperCase();
+    assert.equal(audioMimeForAttachment(upperName, ""), mime);
+    assert.equal(audioBlobForAttachment(new Blob(["bytes"]), upperName, "").type, mime);
+  }
+  assert.equal(audioMimeForAttachment("clip.M4A", "audio/mp4; codecs=mp4a.40.2"), "audio/mp4");
+  assert.equal(
+    audioBlobForAttachment(new Blob(["bytes"], { type: "audio/mp4" }), "clip.m4a", "").type,
+    "audio/mp4",
+  );
+  assert.equal(audioFormatLabel("Recording.amr", "audio/3gpp"), "AMR");
+  assert.equal(audioFormatLabel("Recording.M4A", ""), "M4A");
+});
+
+test("AMR and 3GPP encodings never use the WebView player", async () => {
+  const { d, calls } = deps();
+  for (const [name, mime] of [
+    ["voice.amr", "audio/amr"],
+    ["voice.3gp", "audio/3gpp"],
+    ["voice.3gpp", "audio/3gpp"],
+    ["voice.3gpp2", "audio/3gpp2"],
+    ["voice.amr", "audio/x-amr"],
+    ["voice.bin", "audio/3gpp2"],
+  ]) {
+    assert.equal(isWebViewUnplayableAudio({ name, mime }), true);
+    assert.deepEqual(await openAttachment(file(name, mime), d), { type: "audio-unplayable" });
+  }
+  for (const name of ["VOICE.AMR", "VOICE.3GP", "VOICE.3GPP"]) {
+    assert.equal(isWebViewUnplayableAudio({ name, mime: "" }), true);
+    assert.equal(isWebViewUnplayableAudio({ name, mime: "application/octet-stream" }), true);
+    assert.equal(attachmentKind({ name, mime: "" }), "audio");
+    assert.deepEqual(await openAttachment(file(name, ""), d), { type: "audio-unplayable" });
+    assert.deepEqual(await openAttachment(file(name, "application/octet-stream"), d), {
+      type: "audio-unplayable",
+    });
+  }
+  assert.deepEqual(calls.reads, []);
+  assert.deepEqual(calls.external, []);
+  assert.equal(
+    AUDIO_UNPLAYABLE_MESSAGE,
+    "This recording format can't be played inside Vellum. Open it in another app?",
+  );
+});
+
+test("generic audio formats use canPlayType and external extension MIME mappings", () => {
+  assert.equal(
+    canPlayAudioInWebView("audio/mpeg", () => "probably"),
+    true,
+  );
+  assert.equal(
+    canPlayAudioInWebView("audio/mp4", () => "maybe"),
+    true,
+  );
+  assert.equal(
+    canPlayAudioInWebView("audio/ogg", () => ""),
+    false,
+  );
+  assert.equal(
+    canPlayAudioInWebView("", () => "probably"),
+    false,
+  );
+  assert.equal(externalMime(file("voice.3gp", "application/octet-stream")), "audio/3gpp");
+  assert.equal(externalMime(file("voice.3gpp", "")), "audio/3gpp");
+  assert.equal(externalMime(file("voice.amr", "")), "audio/amr");
+  assert.equal(externalMime(file("voice.3gpp2", "")), "audio/3gpp2");
+  assert.equal(externalMime(file("voice.amr", "audio/x-amr")), "audio/x-amr");
 });
 
 test("PDF and other types go to openExternally without reading the file", async () => {
@@ -231,7 +329,7 @@ test("opening never changes notesModifiedAt or addedAt", async () => {
   }
 });
 
-test("General notes, procedure and consult rows all use the one shared row and opener", () => {
+test("General notes, procedure and consult audio rows share one opener and fallback", () => {
   const detail = readFileSync(
     new URL("../../components/casebook/detail.tsx", import.meta.url),
     "utf8",
@@ -249,6 +347,13 @@ test("General notes, procedure and consult rows all use the one shared row and o
   assert.equal(detail.includes("getBlob"), false);
   assert.equal(detail.includes("createObjectURL"), false);
   assert.match(row, /openAttachment\(file\)/);
+  assert.match(row, /AUDIO_UNPLAYABLE_MESSAGE/);
+  assert.match(row, /openExternally\(file\)/);
+  assert.match(row, /canPlayAudioInWebView/);
+  assert.match(row, /onError=\{\(\) =>/);
+  assert.match(row, /URL\.revokeObjectURL\(url\)/);
   assert.equal(/innerHTML|dangerouslySetInnerHTML|console\./.test(row), false);
   assert.equal((detail.match(/function AttachmentRow/g) ?? []).length, 0);
+  const styles = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
+  assert.match(styles, /\.file-audio\s*\{[^}]*min-height:\s*3rem/s);
 });

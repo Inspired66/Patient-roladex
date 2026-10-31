@@ -97,6 +97,23 @@ test("MIME mapping sent to native: exact types, extension fallback, uppercase, r
   assert.equal(externalMime({ name: "data.csv", mime: "text/csv" }), null);
 });
 
+test("AMR and 3GPP MIME mappings are passed unchanged through the native handoff", async () => {
+  for (const [name, storedMime, expectedMime] of [
+    ["voice.3gp", "", "audio/3gpp"],
+    ["voice.3gpp", "application/octet-stream", "audio/3gpp"],
+    ["voice.amr", "", "audio/amr"],
+    ["voice.amr", "audio/3gpp", "audio/3gpp"],
+    ["voice.3gpp2", "", "audio/3gpp2"],
+    ["voice.amr", "audio/x-amr", "audio/x-amr"],
+  ]) {
+    const { deps, calls } = setup();
+    const result = await openExternally(input(name, storedMime, 10), deps);
+    assert.equal(result.outcome, "opened");
+    assert.equal(calls[0].action, "beginOpenFile");
+    assert.equal(calls[0].payload?.mime, expectedMime);
+  }
+});
+
 test("disallowed types are refused before any read", async () => {
   const { deps, calls, state } = setup();
   const result = await openExternally(input("x.exe", "application/x-msdownload"), deps);

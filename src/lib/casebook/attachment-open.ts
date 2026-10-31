@@ -1,5 +1,6 @@
 import { getBlob, MAX_FILE_BYTES } from "./files.ts";
 import { callNative, hasNativeMessageBridge } from "./native-bridge.ts";
+import { audioBlobForAttachment, isWebViewUnplayableAudio } from "./audio-format.ts";
 import {
   hasAcceptedExternalNotice,
   rememberExternalNotice,
@@ -24,12 +25,14 @@ export const EXTERNAL_FAILED_MESSAGE = "This file could not be opened in another
 export const EXTERNAL_BUSY_MESSAGE = "Another file is still being prepared. Try again in a moment.";
 export const NO_APP_MESSAGE = "No app on this phone can open this type of file.";
 export const REFUSED_MESSAGE = "This file cannot be opened from here.";
+export const AUDIO_UNPLAYABLE_MESSAGE =
+  "This recording format can't be played inside Vellum. Open it in another app?";
 
 // Plain-text preview cap, in bytes read from the stored file.
 export const TEXT_PREVIEW_BYTES = 200 * 1024;
 
 const IMAGE_EXT = /\.(jpe?g|png|webp|gif|heic|heif|bmp)$/i;
-const AUDIO_EXT = /\.(webm|m4a|mp3|wav|ogg|aac|amr|3gp)$/i;
+const AUDIO_EXT = /\.(webm|m4a|mp3|wav|ogg|aac|amr|3gp|3gpp)$/i;
 
 function baseMime(mime: string) {
   return mime.split(";", 1)[0].trim().toLowerCase();
@@ -92,6 +95,8 @@ const EXTERNAL_MIME_BY_EXTENSION: Record<string, string> = {
   ogg: "audio/ogg",
   webm: "audio/webm",
   "3gp": "audio/3gpp",
+  "3gpp": "audio/3gpp",
+  "3gpp2": "audio/3gpp2",
   amr: "audio/amr",
   pdf: "application/pdf",
   txt: "text/plain",
@@ -99,6 +104,7 @@ const EXTERNAL_MIME_BY_EXTENSION: Record<string, string> = {
 const EXTERNAL_MIMES = new Set([
   ...Object.values(EXTERNAL_MIME_BY_EXTENSION),
   "audio/x-wav",
+  "audio/x-amr",
 ]);
 
 // The exact MIME type sent to native, or null when the file is not an allowed attachment type.
@@ -156,7 +162,11 @@ function refusal(reason: string | undefined): OpenExternallyResult {
 }
 
 // Streams the stored file to the phone in bounded chunks, then asks it to open the copy.
-async function transfer(blob: Blob, mime: string, deps: ExternalDeps): Promise<OpenExternallyResult> {
+async function transfer(
+  blob: Blob,
+  mime: string,
+  deps: ExternalDeps,
+): Promise<OpenExternallyResult> {
   const transferId = deps.newTransferId();
   let started = false;
   try {
@@ -169,7 +179,9 @@ async function transfer(blob: Blob, mime: string, deps: ExternalDeps): Promise<O
     if (!begin.accepted) return refusal(begin.reason);
     started = true;
     for (let offset = 0, seq = 0; offset < blob.size; offset += OPEN_CHUNK_BYTES, seq += 1) {
-      const bytes = new Uint8Array(await blob.slice(offset, offset + OPEN_CHUNK_BYTES).arrayBuffer());
+      const bytes = new Uint8Array(
+        await blob.slice(offset, offset + OPEN_CHUNK_BYTES).arrayBuffer(),
+      );
       const reply = await deps.call<TransferReply>("writeOpenChunk", {
         transferId,
         seq,
@@ -234,6 +246,7 @@ export async function readTextPreview(blob: Blob, cap = TEXT_PREVIEW_BYTES): Pro
 export type OpenResult =
   | { type: "image"; blob: Blob }
   | { type: "audio"; blob: Blob }
+  | { type: "audio-unplayable" }
   | { type: "text"; preview: TextPreview }
   | {
       type: "message";
@@ -257,6 +270,9 @@ export async function openAttachment(
     return { type: "message", outcome: "not-restored", message: NOT_RESTORED_MESSAGE };
   }
   const kind = attachmentKind(file);
+  if (kind === "audio" && isWebViewUnplayableAudio(file)) {
+    return { type: "audio-unplayable" };
+  }
   const inline =
     kind === "audio" || kind === "text" || (kind === "image" && !isUndrawableImage(file));
   try {
@@ -272,7 +288,10 @@ export async function openAttachment(
     const blob = await deps.getBlob(file.id);
     if (!blob) return { type: "message", outcome: "missing", message: MISSING_FILE_MESSAGE };
     if (kind === "text") return { type: "text", preview: await readTextPreview(blob) };
-    return { type: kind === "audio" ? "audio" : "image", blob };
+    return {
+      type: kind === "audio" ? "audio" : "image",
+      blob: kind === "audio" ? audioBlobForAttachment(blob, file.name, file.mime) : blob,
+    };
   } catch {
     return { type: "message", outcome: "failed", message: OPEN_FAILED_MESSAGE };
   }

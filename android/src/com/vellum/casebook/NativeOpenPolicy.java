@@ -54,7 +54,9 @@ final class NativeOpenPolicy {
     EXTENSIONS.put("audio/ogg", "ogg");
     EXTENSIONS.put("audio/webm", "webm");
     EXTENSIONS.put("audio/3gpp", "3gp");
+    EXTENSIONS.put("audio/3gpp2", "3gpp2");
     EXTENSIONS.put("audio/amr", "amr");
+    EXTENSIONS.put("audio/x-amr", "amr");
     EXTENSIONS.put("application/pdf", "pdf");
     EXTENSIONS.put("text/plain", "txt");
   }

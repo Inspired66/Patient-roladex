@@ -1,4 +1,5 @@
 import { attachmentKind, attachmentOpenLabel, type AttachmentKind } from "./attachment-open.ts";
+import { audioFormatLabel } from "./audio-format.ts";
 import { formatBytes } from "./format.ts";
 import type { Attachment, Consult, Patient, Surgery } from "./types.ts";
 
@@ -18,7 +19,9 @@ export function formatNotesDate(iso: string | undefined) {
   if (!isValidTimestamp(iso)) return "";
   // A bare YYYY-MM-DD is a calendar date, not an instant: read it as local so it never shifts a day.
   const bare = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  const date = bare ? new Date(Number(bare[1]), Number(bare[2]) - 1, Number(bare[3])) : new Date(iso);
+  const date = bare
+    ? new Date(Number(bare[1]), Number(bare[2]) - 1, Number(bare[3]))
+    : new Date(iso);
   return `${date.getDate()} ${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
 }
 
@@ -148,7 +151,11 @@ export function attachmentRowModel(entry: AttachmentListEntry): AttachmentRowMod
   const sizeLabel = formatBytes(file.size);
   const addedDate = formatNotesDate(entry.addedAt);
   const addedLabel = addedDate ? `Added ${addedDate}` : "";
-  const first = [missing ? "Not restored" : "", sizeLabel, addedLabel].filter(Boolean).join(" · ");
+  const audioFormat =
+    attachmentKind(file) === "audio" ? `Audio · ${audioFormatLabel(file.name, file.mime)}` : "";
+  const first = [missing ? "Not restored" : "", audioFormat, sizeLabel, addedLabel]
+    .filter(Boolean)
+    .join(" · ");
   return {
     id: file.id,
     name: file.name,

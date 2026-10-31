@@ -1,4 +1,5 @@
 import type { Consult, Contact, ContactKind, Patient, Surgery } from "./types";
+import { audioFormatLabel } from "./audio-format.ts";
 
 export type SearchField =
   | "all"
@@ -98,9 +99,21 @@ export function attachmentCountLabel(count: number) {
   return count === 1 ? "1 attachment" : `${count} attachments`;
 }
 
-export function attachmentDetail(file: { size: number; notRestored?: unknown }) {
+export function attachmentDetail(file: {
+  name?: string;
+  mime?: string;
+  size: number;
+  notRestored?: unknown;
+}) {
   const size = formatBytes(file.size);
-  return file.notRestored ? `Not restored · ${size}` : size;
+  const name = file.name ?? "";
+  const mime = file.mime ?? "";
+  const audioFormat =
+    mime.toLowerCase().startsWith("audio/") ||
+    /\.(3gp|3gpp|3gpp2|aac|amr|m4a|mp3|ogg|wav|webm)$/i.test(name)
+      ? `Audio · ${audioFormatLabel(name, mime)}`
+      : "";
+  return [file.notRestored ? "Not restored" : "", audioFormat, size].filter(Boolean).join(" · ");
 }
 
 export function formatBytes(size: number) {
@@ -138,12 +151,18 @@ function compareText(a: string, b: string) {
 }
 
 function nextProcedureDate(patient: Patient, today = todayISO()) {
-  const dates = patient.surgeries.map((item) => item.date).filter(Boolean).sort();
+  const dates = patient.surgeries
+    .map((item) => item.date)
+    .filter(Boolean)
+    .sort();
   return dates.find((date) => date >= today) ?? "";
 }
 
 function latestProcedureDate(patient: Patient) {
-  const dates = patient.surgeries.map((item) => item.date).filter(Boolean).sort();
+  const dates = patient.surgeries
+    .map((item) => item.date)
+    .filter(Boolean)
+    .sort();
   return dates[dates.length - 1] ?? "";
 }
 
@@ -220,7 +239,9 @@ export function orderedPatients(list: Patient[]) {
 
 export function latestSurgery(patient: Patient) {
   if (patient.surgeries.length === 0) return null;
-  return [...patient.surgeries].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id))[0];
+  return [...patient.surgeries].sort(
+    (a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id),
+  )[0];
 }
 
 export function sortedSurgeries(patient: Patient) {
@@ -230,7 +251,9 @@ export function sortedSurgeries(patient: Patient) {
 }
 
 export function sortedConsults(patient: Patient) {
-  return [...patient.consults].sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
+  return [...patient.consults].sort(
+    (a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id),
+  );
 }
 
 /** Procedure date is after today. */
@@ -267,11 +290,21 @@ function fieldHaystack(patient: Patient, field: SearchField) {
                 : field === "procedure"
                   ? procedures.map((item) => item.type)
                   : field === "surgeon"
-                    ? [...procedures.map((item) => item.surgeon), ...consults.map((item) => item.doctor)]
+                    ? [
+                        ...procedures.map((item) => item.surgeon),
+                        ...consults.map((item) => item.doctor),
+                      ]
                     : field === "hospital"
-                      ? [...procedures.map((item) => item.hospital), ...consults.map((item) => item.medicalCentre)]
+                      ? [
+                          ...procedures.map((item) => item.hospital),
+                          ...consults.map((item) => item.medicalCentre),
+                        ]
                       : field === "notes"
-                        ? [patient.notes, ...procedures.map((item) => item.notes), ...consults.map((item) => item.notes)]
+                        ? [
+                            patient.notes,
+                            ...procedures.map((item) => item.notes),
+                            ...consults.map((item) => item.notes),
+                          ]
                         : [
                             patient.name,
                             displayName(patient.name),

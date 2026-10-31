@@ -63,12 +63,19 @@ public final class NativeOpenPolicyTest {
     check("vellum-file.heic".equals(NativeOpenPolicy.neutralName("image/heic")), "heic name is neutral");
     check("vellum-file.txt".equals(NativeOpenPolicy.neutralName("text/plain")), "text name is neutral");
     check("vellum-file.wav".equals(NativeOpenPolicy.neutralName("audio/x-wav")), "x-wav name is neutral");
+    check("vellum-file.3gp".equals(NativeOpenPolicy.neutralName("audio/3gpp")), "3gpp name keeps its extension");
+    check("vellum-file.3gpp2".equals(NativeOpenPolicy.neutralName("audio/3gpp2")), "3gpp2 name is supported");
+    check("vellum-file.amr".equals(NativeOpenPolicy.neutralName("audio/x-amr")), "x-amr name is supported");
     for (String bad : new String[] {null, "", "application/octet-stream", "text/html", "application/zip",
         "application/pdf; charset=x", "APPLICATION/PDF", "image/svg+xml", "application/vnd.android.package-archive",
         "../pdf", "application/x-msdownload"}) {
       check(!NativeOpenPolicy.isAllowedMime(bad), "bad mime rejected: " + bad);
       check(NativeOpenPolicy.neutralName(bad) == null, "no name for bad mime: " + bad);
     }
+    for (String mime : new String[] {"audio/3gpp", "audio/3gpp2", "audio/amr", "audio/x-amr"}) {
+      check(NativeOpenPolicy.isAllowedMime(mime), "handoff allows supported non-WebView audio MIME: " + mime);
+    }
+    check(!NativeOpenPolicy.isAllowedMime("audio/x-unknown"), "unlisted audio MIME remains refused");
     check(!NativeOpenPolicy.isAllowedSize(0), "empty size rejected");
     check(!NativeOpenPolicy.isAllowedSize(-1), "negative size rejected");
     check(NativeOpenPolicy.isAllowedSize(NativeOpenPolicy.MAX_BYTES), "cap size accepted");
@@ -230,6 +237,10 @@ public final class NativeOpenPolicyTest {
       check(NativeAttachmentPolicy.isAllowedType(mime, ""), "attachment type: " + mime);
       check(NativeOpenPolicy.isAllowedMime(mime), "open allow-list covers attachment type: " + mime);
     }
+    check(!NativeAttachmentPolicy.isAllowedType("audio/x-amr", "x.amr"),
+        "handoff-only MIME does not widen attachment selection");
+    check(!NativeAttachmentPolicy.isAllowedType("audio/3gpp2", "x.3gpp2"),
+        "handoff-only 3gpp2 does not widen attachment selection");
   }
 
   private static byte[] fill(int length, int value) {

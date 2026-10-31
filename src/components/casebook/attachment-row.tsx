@@ -5,6 +5,8 @@ import { Confirm } from "@/components/casebook/forms";
 import {
   attachmentKind,
   attachmentOpenLabel,
+  AUDIO_UNPLAYABLE_MESSAGE,
+  openExternally,
   openAttachment,
   TEXT_CUT_MESSAGE,
   EMPTY_TEXT_MESSAGE,
@@ -12,6 +14,7 @@ import {
   type TextPreview,
 } from "@/lib/casebook/attachment-open";
 import { useBackLayer } from "@/lib/casebook/back";
+import { canPlayAudioInWebView } from "@/lib/casebook/audio-format";
 import { attachmentDetail } from "@/lib/casebook/format";
 import type { Attachment } from "@/lib/casebook/types";
 
@@ -41,6 +44,7 @@ export function AttachmentRow({
   const [media, setMedia] = useState<Media | null>(null);
   const [text, setText] = useState<TextPreview | null>(null);
   const [notice, setNotice] = useState("");
+  const [audioExternalPrompt, setAudioExternalPrompt] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const busy = useRef(false);
   const Icon = ICON[attachmentKind(file)];
@@ -61,11 +65,34 @@ export function AttachmentRow({
     }
     busy.current = true;
     setNotice("");
+    setAudioExternalPrompt(false);
     try {
       const result = await openAttachment(file);
       if (result.type === "message") setNotice(result.message);
       else if (result.type === "text") setText(result.preview);
-      else setMedia({ kind: result.type, url: URL.createObjectURL(result.blob) });
+      else if (result.type === "audio-unplayable") setAudioExternalPrompt(true);
+      else if (result.type === "audio") {
+        const audio = document.createElement("audio");
+        if (!canPlayAudioInWebView(result.blob.type, (type) => audio.canPlayType(type))) {
+          setAudioExternalPrompt(true);
+        } else {
+          setMedia({ kind: "audio", url: URL.createObjectURL(result.blob) });
+        }
+      } else {
+        setMedia({ kind: result.type, url: URL.createObjectURL(result.blob) });
+      }
+    } finally {
+      busy.current = false;
+    }
+  }
+
+  async function openAudioExternally() {
+    if (busy.current) return;
+    busy.current = true;
+    setNotice("");
+    try {
+      const result = await openExternally(file);
+      setNotice(result.message);
     } finally {
       busy.current = false;
     }
@@ -78,7 +105,7 @@ export function AttachmentRow({
           type="button"
           className="file-open"
           aria-label={ariaLabel ?? attachmentOpenLabel(file)}
-          aria-expanded={media?.kind === "audio" ? true : undefined}
+          aria-expanded={media?.kind === "audio" || audioExternalPrompt ? true : undefined}
           onClick={() => void open()}
         >
           <span className="file-icon" aria-hidden>
@@ -106,8 +133,26 @@ export function AttachmentRow({
           {notice}
         </p>
       ) : null}
+      {audioExternalPrompt ? (
+        <div className="audio-open-prompt" role="status">
+          <p>{AUDIO_UNPLAYABLE_MESSAGE}</p>
+          <button type="button" className="btn-ghost" onClick={() => void openAudioExternally()}>
+            Open in another app
+          </button>
+        </div>
+      ) : null}
       {media?.kind === "audio" ? (
-        <audio className="file-audio" controls src={media.url} preload="none" />
+        <audio
+          className="file-audio"
+          controls
+          src={media.url}
+          preload="none"
+          onError={() => {
+            setNotice("");
+            setMedia(null);
+            setAudioExternalPrompt(true);
+          }}
+        />
       ) : null}
       {media?.kind === "image" ? (
         <ImageViewer name={file.name} url={media.url} onClose={() => setMedia(null)} />

@@ -104,6 +104,7 @@ class WebAssetCheckTest(unittest.TestCase):
         self.assertIn("NativeOpenPolicy.Transfer", source)
         launch = source.split("private String launchViewer(", 1)[1].split("\n  private ", 1)[0]
         self.assertIn("Intent.createChooser", launch)
+        self.assertIn("view.setDataAndType(uri, mime);", launch)
         self.assertIn("Intent.FLAG_GRANT_READ_URI_PERMISSION", launch)
         self.assertIn("ClipData", launch)
         self.assertNotIn("FLAG_GRANT_WRITE_URI_PERMISSION", launch)
