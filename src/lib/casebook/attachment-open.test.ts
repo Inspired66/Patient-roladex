@@ -4,14 +4,13 @@ import test from "node:test";
 import {
   attachmentKind,
   attachmentOpenLabel,
+  BROWSER_ONLY_MESSAGE,
   EMPTY_TEXT_MESSAGE,
   MISSING_FILE_MESSAGE,
   NOT_RESTORED_MESSAGE,
   OPEN_FAILED_MESSAGE,
   openAttachment,
   openExternally,
-  OTHER_UNAVAILABLE_MESSAGE,
-  PDF_UNAVAILABLE_MESSAGE,
   readTextPreview,
   TEXT_PREVIEW_BYTES,
   type OpenDeps,
@@ -76,13 +75,13 @@ test("PDF and other types go to openExternally without reading the file", async 
   assert.deepEqual(pdf, {
     type: "message",
     outcome: "unavailable",
-    message: PDF_UNAVAILABLE_MESSAGE,
+    message: BROWSER_ONLY_MESSAGE,
   });
   const other = await openAttachment(file("x.bin", "application/octet-stream"), d);
   assert.deepEqual(other, {
     type: "message",
     outcome: "unavailable",
-    message: OTHER_UNAVAILABLE_MESSAGE,
+    message: BROWSER_ONLY_MESSAGE,
   });
   const heic = await openAttachment(file("p.heic", "image/heic"), d);
   assert.equal(heic.type === "message" && heic.outcome, "unavailable");

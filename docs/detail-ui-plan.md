@@ -281,3 +281,12 @@ Gates per batch: `npm run typecheck`, `npm run lint`, `npm test`, and `android/b
 - `src/components/casebook/attachment-row.tsx` is the single row used by General notes, procedure and consult lists. The whole row is one tap target (48 px). Remove sits on its own line below the row, behind a confirm.
 - The text viewer reads only on tap, caps at 200 KB, uses `<pre>` text only, says when the file is cut off, and decodes invalid UTF-8 with replacement characters. Viewers render in a portal on `document.body`.
 - Not restored files make no blob read. HEIC/HEIF go to `openExternally` because the WebView cannot draw them. CSV is not an allowed attachment type, so it is not treated as text.
+
+## Chunk 2c-2: open in another app
+
+- Web `openExternally` (attachment-open.ts) reads the blob only on tap, shows a one-time notice (localStorage boolean `vellum-external-open-accepted`), then sends 256 KB base64 chunks: `beginOpenFile` -> `writeOpenChunk`* -> `finishOpenFile` (`cancelOpenFile` on failure). Outside the app it returns "unavailable".
+- Native `NativeOpenPolicy`: trusted origin, one transfer at a time, sequential chunks, 30 MB ceiling (web caps at 4 MiB), exact MIME allow-list, no path or name from the page.
+- Copy lives at `cache/open/<token>/vellum-file.<ext>`, served read-only by the non-exported provider. Neutral name: nothing identifying reaches the other app, but the user loses the real file name there.
+- Launch: ACTION_VIEW + READ grant + ClipData via chooser; `<queries>` entries for pdf, image, audio, text so `resolveActivity` works on Android 11+.
+- Cleanup: purge at begin, app start, resume and destroy; partial files deleted on error or cancel. A copy can exist from transfer end until the user returns to Vellum, opens another file, or the app restarts.
+- No "show the notice again" control yet; `resetExternalNotice()` exists.

@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { AttachControls } from "@/components/casebook/attach";
+import { ExternalOpenNotice } from "@/components/casebook/external-notice";
 import { AttachmentRow } from "@/components/casebook/attachment-row";
 import { AttachmentCount } from "@/components/casebook/attachment-count";
 import { Confirm } from "@/components/casebook/forms";
@@ -414,6 +415,7 @@ export function PatientDetail({
             </button>
           </div>
           <GeneralNotes key={patient.id} patient={patient} />
+          <ExternalOpenNotice />
           <div className="section-head">
             <h3>History</h3>
             <span>{timeline.length}</span>

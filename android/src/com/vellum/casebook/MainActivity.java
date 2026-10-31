@@ -110,6 +110,8 @@ public class MainActivity extends Activity {
   private final Set<String> pickerUris = Collections.synchronizedSet(new HashSet<>());
   private final NativeRestorePickerPolicy.Arm restorePickerArm = new NativeRestorePickerPolicy.Arm();
   private String saveName = "vellum.csv";
+  private NativeOpenPolicy.Transfer openTransfer;
+  private Uri openUri;
   private String saveMime = "application/octet-stream";
   private final Map<String, JavaScriptReplyProxy> pendingReplies = new HashMap<>();
   private final Set<Integer> completedMigrationPorts = new HashSet<>();
@@ -128,6 +130,8 @@ public class MainActivity extends Activity {
   @Override
   protected void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
+    openTransfer = new NativeOpenPolicy.Transfer(openRoot());
+    dropOpenCopies();
     webView = new WebView(this);
     webView.setBackgroundColor(Color.parseColor("#0c0d0f"));
     getWindow().setFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE,
@@ -367,6 +371,19 @@ public class MainActivity extends Activity {
         case "beginSave":
           beginSave(id, payload);
           break;
+        case "beginOpenFile":
+          beginOpenFile(id, payload);
+          break;
+        case "writeOpenChunk":
+          writeOpenChunk(id, payload);
+          break;
+        case "finishOpenFile":
+          finishOpenFile(id, payload);
+          break;
+        case "cancelOpenFile":
+          openTransfer.cancel();
+          sendNativeResult(id, new JSONObject());
+          break;
         case "writeChunk":
           writeChunk(id, payload);
           break;
@@ -453,6 +470,10 @@ public class MainActivity extends Activity {
       case "beginSave":
       case "writeChunk":
       case "finishSave":
+      case "beginOpenFile":
+      case "writeOpenChunk":
+      case "finishOpenFile":
+      case "cancelOpenFile":
       case "migrationStatus":
       case "beginLegacyMigration":
       case "migrationArchiveInfo":
@@ -590,6 +611,137 @@ public class MainActivity extends Activity {
     } catch (ActivityNotFoundException error) {
       savePickerOpen = false;
       signalPicker(false);
+    }
+  }
+
+  private File openRoot() {
+    return new File(getCacheDir(), NativeOpenPolicy.DIR);
+  }
+
+  // Ends any earlier hand-off: revokes its grant and removes every temporary copy.
+  private void dropOpenCopies() {
+    releaseOpenGrant();
+    if (openTransfer != null) openTransfer.cancel();
+    NativeOpenPolicy.purge(openRoot(), System.currentTimeMillis(), 0);
+  }
+
+  private void releaseOpenGrant() {
+    Uri uri = openUri;
+    openUri = null;
+    if (uri == null) return;
+    try {
+      revokeUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+    } catch (RuntimeException ignored) {
+      // The copy is deleted below whether or not the grant could be revoked.
+    }
+    VellumFileProvider.delete(uri);
+  }
+
+  private JSONObject openReply(String reason) {
+    JSONObject result = statusResult("accepted", reason == null);
+    if (reason != null) {
+      try {
+        result.put("reason", reason);
+      } catch (JSONException ignored) {
+        // A fixed key and a fixed reason cannot fail JSON encoding.
+      }
+    }
+    return result;
+  }
+
+  private void beginOpenFile(String requestId, JSONObject payload) {
+    if (payload == null
+        || !NativeOpenPolicy.isValidBeginPayload(
+            payload.length(), payload.opt("transferId"), payload.opt("mime"), payload.opt("size"))) {
+      sendNativeResult(requestId, openReply(NativeOpenPolicy.REASON_PAYLOAD));
+      return;
+    }
+    Uri page = Uri.parse(webView.getUrl());
+    if (!NativeOpenPolicy.isRequestAllowed(page.getScheme(), page.getHost(), page.getPort())) {
+      sendNativeResult(requestId, openReply(NativeOpenPolicy.REASON_ORIGIN));
+      return;
+    }
+    if (!openTransfer.isActive()) releaseOpenGrant();
+    String reason = openTransfer.begin(
+        payload.optString("transferId", ""),
+        payload.optString("mime", ""),
+        payload.optLong("size", 0),
+        SystemClock.elapsedRealtime());
+    sendNativeResult(requestId, openReply(reason));
+  }
+
+  private void writeOpenChunk(String requestId, JSONObject payload) {
+    if (payload == null
+        || !NativeOpenPolicy.isValidChunkPayload(
+            payload.length(), payload.opt("transferId"), payload.opt("seq"), payload.opt("data"))) {
+      openTransfer.cancel();
+      sendNativeResult(requestId, openReply(NativeOpenPolicy.REASON_PAYLOAD));
+      return;
+    }
+    String data = payload.optString("data", "");
+    byte[] bytes = null;
+    if (NativeOpenPolicy.isAllowedBase64Length(data.length())) {
+      try {
+        bytes = android.util.Base64.decode(data, android.util.Base64.NO_WRAP);
+      } catch (IllegalArgumentException ignored) {
+        bytes = null;
+      }
+    }
+    if (bytes == null) {
+      openTransfer.cancel();
+      sendNativeResult(requestId, openReply(NativeOpenPolicy.REASON_SIZE));
+      return;
+    }
+    String reason = openTransfer.chunk(
+        payload.optString("transferId", ""),
+        payload.optInt("seq", -1),
+        bytes,
+        SystemClock.elapsedRealtime());
+    sendNativeResult(requestId, openReply(reason));
+  }
+
+  private void finishOpenFile(String requestId, JSONObject payload) {
+    if (payload == null
+        || !NativeOpenPolicy.isValidFinishPayload(payload.length(), payload.opt("transferId"))) {
+      openTransfer.cancel();
+      sendNativeResult(requestId, openReply(NativeOpenPolicy.REASON_PAYLOAD));
+      return;
+    }
+    NativeOpenPolicy.Result copy =
+        openTransfer.finish(payload.optString("transferId", ""), SystemClock.elapsedRealtime());
+    if (!copy.ok()) {
+      sendNativeResult(requestId, openReply(copy.reason));
+      return;
+    }
+    openUri = VellumFileProvider.registerOpen(copy.file, copy.token, copy.mime);
+    String outcome = launchViewer(openUri, copy.mime);
+    if (!"opened".equals(outcome)) dropOpenCopies();
+    JSONObject result = new JSONObject();
+    try {
+      result.put("outcome", outcome);
+    } catch (JSONException ignored) {
+      // A fixed key and a fixed outcome cannot fail JSON encoding.
+    }
+    sendNativeResult(requestId, result);
+  }
+
+  // Read access only, through a chooser. A chooser never throws for "no app", so look first.
+  private String launchViewer(Uri uri, String mime) {
+    Intent view = new Intent(Intent.ACTION_VIEW);
+    view.setDataAndType(uri, mime);
+    view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+    view.setClipData(ClipData.newRawUri("", uri));
+    if (view.resolveActivity(getPackageManager()) == null) return "no-app";
+    Intent chooser = Intent.createChooser(view, null);
+    chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+    chooser.setClipData(ClipData.newRawUri("", uri));
+    try {
+      startActivity(chooser);
+      return "opened";
+    } catch (ActivityNotFoundException error) {
+      return "no-app";
+    } catch (RuntimeException error) {
+      return "failed";
     }
   }
 
@@ -1929,8 +2081,16 @@ public class MainActivity extends Activity {
   }
 
   @Override
+  protected void onResume() {
+    super.onResume();
+    // Coming back from another app ends the hand-off: grant revoked, temporary copy deleted.
+    dropOpenCopies();
+  }
+
+  @Override
   protected void onPause() {
     restorePickerArm.clear();
+    if (openTransfer != null) openTransfer.cancel();
     micCaptureArmed = false;
     micCaptureActive = false;
     micCaptureArmExpiresAt = 0;
@@ -1950,6 +2110,7 @@ public class MainActivity extends Activity {
   @Override
   protected void onDestroy() {
     restorePickerArm.clear();
+    dropOpenCopies();
     clearMicrophoneCapture();
     if (server != null) server.stop();
     if (migrationServer != null) migrationServer.stop();
@@ -1991,6 +2152,26 @@ public class MainActivity extends Activity {
       return uri;
     }
 
+    private static final java.util.Map<String, String> OPEN_TYPES = new java.util.concurrent.ConcurrentHashMap<>();
+
+    // Hand-off copies live at open/<token>/<neutral name> and are readable, never writable.
+    static Uri registerOpen(File file, String token, String mime) {
+      Uri uri = new Uri.Builder()
+          .scheme(ContentResolver.SCHEME_CONTENT)
+          .authority(AUTHORITY)
+          .appendPath(NativeOpenPolicy.DIR)
+          .appendPath(token)
+          .appendPath(file.getName())
+          .build();
+      FILES.put(uri.toString(), file);
+      OPEN_TYPES.put(uri.toString(), mime);
+      return uri;
+    }
+
+    private static boolean isOpenUri(Uri uri) {
+      return uri != null && OPEN_TYPES.containsKey(uri.toString());
+    }
+
     static void markReady(Uri uri) {
       if (uri != null && FILES.containsKey(uri.toString())) READY_FOR_READ.add(uri.toString());
     }
@@ -2003,6 +2184,7 @@ public class MainActivity extends Activity {
       if (uri == null) return;
       String key = uri.toString();
       READY_FOR_READ.remove(key);
+      OPEN_TYPES.remove(key);
       File file = FILES.remove(key);
       if (file != null && file.exists()) file.delete();
     }
@@ -2014,6 +2196,7 @@ public class MainActivity extends Activity {
 
     @Override
     public String getType(Uri uri) {
+      if (isOpenUri(uri)) return OPEN_TYPES.get(uri.toString());
       return isRegistered(uri) ? "image/jpeg" : null;
     }
 
@@ -2038,6 +2221,10 @@ public class MainActivity extends Activity {
     public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
       File file = resolve(uri);
       if (file == null) throw new FileNotFoundException("Unknown camera file.");
+      if (isOpenUri(uri)) {
+        if (!"r".equals(mode)) throw new FileNotFoundException("Unsupported file mode.");
+        return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
+      }
       int flags;
       if ("r".equals(mode)) flags = ParcelFileDescriptor.MODE_READ_ONLY;
       else if ("w".equals(mode) || "wt".equals(mode)) {
@@ -2089,17 +2276,21 @@ public class MainActivity extends Activity {
     private File resolve(Uri uri) {
       if (uri == null
           || !ContentResolver.SCHEME_CONTENT.equals(uri.getScheme())
-          || !AUTHORITY.equals(uri.getAuthority())
-          || uri.getPathSegments().size() != 2
-          || !"camera".equals(uri.getPathSegments().get(0))) {
+          || !AUTHORITY.equals(uri.getAuthority())) {
         return null;
       }
+      List<String> segments = uri.getPathSegments();
+      boolean open = segments.size() == 3 && NativeOpenPolicy.DIR.equals(segments.get(0));
+      boolean camera = segments.size() == 2 && "camera".equals(segments.get(0));
+      if (!open && !camera) return null;
       File file = FILES.get(uri.toString());
       if (file == null || getContext() == null) return null;
       try {
-        File root = new File(getContext().getCacheDir(), "camera").getCanonicalFile();
+        File root = new File(getContext().getCacheDir(), open ? NativeOpenPolicy.DIR : "camera").getCanonicalFile();
         File candidate = file.getCanonicalFile();
-        return root.equals(candidate.getParentFile()) ? candidate : null;
+        File parent = candidate.getParentFile();
+        if (open && parent != null) parent = parent.getParentFile();
+        return root.equals(parent) ? candidate : null;
       } catch (IOException error) {
         return null;
       }

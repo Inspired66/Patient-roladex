@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import importlib.util
 import tempfile
+import re
 import unittest
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -91,6 +92,42 @@ class WebAssetCheckTest(unittest.TestCase):
         self.assertNotIn("Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION", restore_chooser)
         self.assertIn("Choose an image, audio recording, PDF, or plain-text file.", source)
         self.assertIn("NativeAttachmentPolicy.isAllowedType(mime, name)", source)
+
+    def test_open_in_another_app_handoff_stays_narrow(self) -> None:
+        root = Path(__file__).parent
+        source = (root / "src/com/vellum/casebook/MainActivity.java").read_text(encoding="utf-8")
+        for action in ("beginOpenFile", "writeOpenChunk", "finishOpenFile", "cancelOpenFile"):
+            self.assertIn(f'case "{action}":', source)
+        allowed = source.split("isActionAllowed(", 1)[1]
+        for action in ("beginOpenFile", "writeOpenChunk", "finishOpenFile", "cancelOpenFile"):
+            self.assertIn(f'"{action}"', allowed)
+        self.assertIn("NativeOpenPolicy.Transfer", source)
+        launch = source.split("private String launchViewer(", 1)[1].split("\n  private ", 1)[0]
+        self.assertIn("Intent.createChooser", launch)
+        self.assertIn("Intent.FLAG_GRANT_READ_URI_PERMISSION", launch)
+        self.assertIn("ClipData", launch)
+        self.assertNotIn("FLAG_GRANT_WRITE_URI_PERMISSION", launch)
+        self.assertNotIn("FLAG_GRANT_PERSISTABLE_URI_PERMISSION", launch)
+        self.assertIn("ActivityNotFoundException", launch)
+        manifest = (root / "AndroidManifest.xml").read_text(encoding="utf-8")
+        provider = manifest.split("<provider", 1)[1].split("/>", 1)[0] if "<provider" in manifest else ""
+        self.assertIn('android:exported="false"', provider)
+        self.assertNotIn('android:exported="true"', manifest.split("<provider", 1)[1])
+        self.assertIn("<queries>", manifest)
+        self.assertIn('android:mimeType="application/pdf"', manifest)
+        permissions = sorted(re.findall(r'uses-permission android:name="([^"]+)"', manifest))
+        self.assertEqual(
+            permissions,
+            sorted(
+                [
+                    "android.permission.CAMERA",
+                    "android.permission.INTERNET",
+                    "android.permission.RECORD_AUDIO",
+                ]
+            ),
+        )
+        paths = (root / "res/xml/file_paths.xml").read_text(encoding="utf-8")
+        self.assertIn('path="open/"', paths)
 
     def test_android_build_uses_pinned_webkit_and_scans_packaged_assets(self) -> None:
         build = Path(__file__).with_name("build-apk.sh").read_text(encoding="utf-8")
