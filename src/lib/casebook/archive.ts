@@ -830,10 +830,6 @@ export function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-export function hasNativeSave() {
-  return hasNativeMessageBridge();
-}
-
 type DirectoryHandle = {
   getFileHandle: (
     name: string,

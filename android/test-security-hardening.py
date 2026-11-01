@@ -83,6 +83,7 @@ class WebAssetCheckTest(unittest.TestCase):
         source = (Path(__file__).parent / "src/com/vellum/casebook/MainActivity.java").read_text(encoding="utf-8")
         for dead_symbol in (
             "VellumBridge",
+            "requestCamera",
             "__vellumFileStart",
             "__vellumFileChunk",
             "__vellumFileDone",
