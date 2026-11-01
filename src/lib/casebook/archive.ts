@@ -830,28 +830,8 @@ export function downloadBlob(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-type SaveWindow = Window & {
-  __vellumMicPause?: () => void;
-  __vellumAbortRecording?: () => void;
-};
-
 export function hasNativeSave() {
   return hasNativeMessageBridge();
-}
-
-export function requestPhoneMicrophone(userInitiated: boolean) {
-  if (!hasNativeMessageBridge()) return Promise.resolve("browser" as const);
-  if (!userInitiated) return Promise.resolve("gesture_required" as const);
-  return callNative<{ status: "granted" | "denied" | "settings" }>("beginMicrophoneCapture")
-    .then((result) => result?.status ?? "denied")
-    .catch(() => "denied" as const);
-}
-
-export function endPhoneMicrophoneCapture() {
-  if (hasNativeMessageBridge()) void callNative("endMicrophoneCapture").catch(() => undefined);
-  if (typeof window !== "undefined") {
-    (window as SaveWindow).__vellumMicPause = undefined;
-  }
 }
 
 export function requestPhoneCamera() {
