@@ -834,13 +834,6 @@ export function hasNativeSave() {
   return hasNativeMessageBridge();
 }
 
-export function requestPhoneCamera() {
-  if (!hasNativeMessageBridge()) return Promise.resolve("browser" as const);
-  return callNative<{ status: "granted" | "denied" | "settings" }>("requestCamera")
-    .then((result) => result?.status ?? "denied")
-    .catch(() => "denied" as const);
-}
-
 type DirectoryHandle = {
   getFileHandle: (
     name: string,

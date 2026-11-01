@@ -21,7 +21,6 @@ import android.os.SystemClock;
 import android.provider.DocumentsContract;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
-import android.provider.Settings;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -87,8 +86,6 @@ public class MainActivity extends Activity {
   private int migrationPort = -1;
   private boolean messageListenerInstalled;
   private ValueCallback<Uri[]> upload;
-  private boolean camFromBridge;
-  private boolean camAsked;
   private boolean backPending;
   private boolean photoFromJs;
   private Uri cameraOutput;
@@ -112,7 +109,6 @@ public class MainActivity extends Activity {
   private String saveMime = "application/octet-stream";
   private final Map<String, JavaScriptReplyProxy> pendingReplies = new HashMap<>();
   private final Set<Integer> completedMigrationPorts = new HashSet<>();
-  private String pendingCameraRequestId;
   private boolean cameraPermissionPending;
   private final NativeRecorderPolicy.Session recorderSession = new NativeRecorderPolicy.Session();
   private final VoiceRecorder voiceRecorder = new VoiceRecorder();
@@ -379,9 +375,6 @@ public class MainActivity extends Activity {
       }
       pendingReplies.put(id, replyProxy);
       switch (action) {
-        case "requestCamera":
-          requestCamera(id);
-          break;
         case "stopRecorder":
         case "cancelRecorder":
           controlRecorder(id, action, request.length());
@@ -489,7 +482,6 @@ public class MainActivity extends Activity {
 
   private boolean isActionAllowed(String action) {
     switch (action) {
-      case "requestCamera":
       case "stopRecorder":
       case "cancelRecorder":
       case "armRestorePicker":
@@ -548,26 +540,6 @@ public class MainActivity extends Activity {
       return;
     }
     sendNativeResult(requestId, statusResult("armed", true));
-  }
-
-  private void requestCamera(String requestId) {
-    if (!isTrustedCurrentPage()) {
-      sendNativeResult(requestId, statusResult("status", "denied"));
-      return;
-    }
-    if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-      sendNativeResult(requestId, statusResult("status", "granted"));
-      return;
-    }
-    pendingCameraRequestId = requestId;
-    if (camAsked && !shouldShowRequestPermissionRationale(android.Manifest.permission.CAMERA)) {
-      openPermissionSettings();
-      signalCam(false, "settings");
-      return;
-    }
-    camAsked = true;
-    camFromBridge = true;
-    requestPermissions(new String[] {android.Manifest.permission.CAMERA}, CAM_REQ);
   }
 
   private void readList(String requestId) {
@@ -1794,29 +1766,6 @@ public class MainActivity extends Activity {
     releaseRecorderFocus();
   }
 
-  private void openPermissionSettings() {
-    Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
-    intent.setData(Uri.fromParts("package", getPackageName(), null));
-    try {
-      startActivity(intent);
-    } catch (ActivityNotFoundException ignored) {
-      /* no settings */
-    }
-  }
-
-  private void signalCam(boolean granted, String reason) {
-    String requestId = pendingCameraRequestId;
-    pendingCameraRequestId = null;
-    if (requestId == null) return;
-    try {
-      JSONObject result = new JSONObject();
-      result.put("status", granted ? "granted" : reason);
-      sendNativeResult(requestId, result);
-    } catch (JSONException error) {
-      sendNativeError(requestId, "The phone could not prepare the camera response.");
-    }
-  }
-
   private void signalPhoto(boolean ok) {
     signalPickEnd(ok, ok ? "" : "");
   }
@@ -2141,23 +2090,6 @@ public class MainActivity extends Activity {
   }
 
   public final class VellumBridge {
-    public void requestCamera() {
-      runOnUiThread(() -> {
-        if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-          signalCam(true, "granted");
-          return;
-        }
-        if (camAsked && !shouldShowRequestPermissionRationale(android.Manifest.permission.CAMERA)) {
-          openPermissionSettings();
-          signalCam(false, "settings");
-          return;
-        }
-        camAsked = true;
-        camFromBridge = true;
-        requestPermissions(new String[] {android.Manifest.permission.CAMERA}, CAM_REQ);
-      });
-    }
-
     public void openCamera() {
       runOnUiThread(() -> {
         if (checkSelfPermission(android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
@@ -2537,15 +2469,6 @@ public class MainActivity extends Activity {
     if (requestCode == CAM_REQ && cameraPermissionPending) {
       onCameraPermissionResult(grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED);
       return;
-    }
-    if (requestCode == CAM_REQ && camFromBridge) {
-      camFromBridge = false;
-      boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
-      if (granted) signalCam(true, "granted");
-      else if (!shouldShowRequestPermissionRationale(android.Manifest.permission.CAMERA)) {
-        openPermissionSettings();
-        signalCam(false, "settings");
-      } else signalCam(false, "denied");
     }
   }
 
