@@ -49,7 +49,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.HashSet;
@@ -59,8 +58,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
 
 public class MainActivity extends Activity {
   private static final int FILE_REQ = 1001;
@@ -68,7 +65,6 @@ public class MainActivity extends Activity {
   private static final int REC_REQ = 2003;
   private static final int CAM_REQ = 2002;
   private static final int SAVE_REQ = 1003;
-  private static final int PICK_REQ = 1005;
   private static final int LIST_REQ = 1006;
   private static final int RESTORE_FILE_REQ = 1007;
   private static final int MAX_SAVE_CHUNK_BYTES = 48 * 1024;
@@ -87,7 +83,6 @@ public class MainActivity extends Activity {
   private boolean messageListenerInstalled;
   private ValueCallback<Uri[]> upload;
   private boolean backPending;
-  private boolean photoFromJs;
   private Uri cameraOutput;
   private File cameraOutputFile;
   private boolean savePickerOpen;
@@ -1766,10 +1761,6 @@ public class MainActivity extends Activity {
     releaseRecorderFocus();
   }
 
-  private void signalPhoto(boolean ok) {
-    signalPickEnd(ok, ok ? "" : "");
-  }
-
   private void signalList(boolean ok, String payloadJson, String message) {
     String requestId = pendingListRequestId;
     pendingListRequestId = null;
@@ -1818,17 +1809,6 @@ public class MainActivity extends Activity {
     }, "vellum-ocr").start();
   }
 
-  private void signalPickEnd(boolean ok, String reason) {
-    if (webView == null) return;
-    String safe = reason == null ? "" : reason.replace("\\", "").replace("'", "");
-    webView.evaluateJavascript("window.__vellumPickEnd&&window.__vellumPickEnd(" + ok + ",'" + safe + "')", null);
-  }
-
-  private String jsString(String value) {
-    if (value == null) return "";
-    return value.replace("\\", "").replace("'", "").replace("\n", " ").replace("\r", " ");
-  }
-
   private String displayName(Uri uri, String fallback) {
     Cursor cursor = null;
     try {
@@ -1843,85 +1823,6 @@ public class MainActivity extends Activity {
       if (cursor != null) cursor.close();
     }
     return fallback;
-  }
-
-  private String appendUri(Uri uri, String fallbackName, String fallbackMime) {
-    String problem = attachmentError(uri);
-    if (problem != null) return problem;
-    String name = jsString(displayName(uri, fallbackName));
-    String mime = getContentResolver().getType(uri);
-    if (mime == null || mime.isEmpty()) mime = fallbackMime;
-    if (!evaluateJavascriptAndWait("window.__vellumFileStart&&window.__vellumFileStart('" + name + "','" + jsString(mime) + "')")) {
-      return "The attachment could not be sent to the casebook.";
-    }
-
-    long total = 0;
-    try (InputStream input = getContentResolver().openInputStream(uri)) {
-      if (input == null) return "That attachment could not be opened.";
-      byte[] chunk = new byte[MAX_SAVE_CHUNK_BYTES];
-      int read;
-      while ((read = input.read(chunk)) != -1) {
-        total += read;
-        if (total > NativeAttachmentPolicy.MAX_FILE_BYTES) return "Attachments must be 4 MB or smaller.";
-        byte[] bounded = read == chunk.length ? chunk : Arrays.copyOf(chunk, read);
-        String payload = android.util.Base64.encodeToString(bounded, android.util.Base64.NO_WRAP);
-        if (!evaluateJavascriptAndWait("window.__vellumFileChunk&&window.__vellumFileChunk('" + payload + "')")) {
-          return "The attachment could not be sent to the casebook.";
-        }
-      }
-    } catch (IOException error) {
-      return "That attachment could not be read.";
-    }
-    if (total == 0) return "That attachment was empty.";
-    return evaluateJavascriptAndWait("window.__vellumFileDone&&window.__vellumFileDone()")
-        ? null
-        : "The attachment could not be sent to the casebook.";
-  }
-
-  private boolean evaluateJavascriptAndWait(String script) {
-    WebView current = webView;
-    if (current == null) return false;
-    CountDownLatch completed = new CountDownLatch(1);
-    boolean posted = current.post(() -> current.evaluateJavascript(script, ignored -> completed.countDown()));
-    if (!posted) return false;
-    try {
-      return completed.await(10, TimeUnit.SECONDS);
-    } catch (InterruptedException error) {
-      Thread.currentThread().interrupt();
-      return false;
-    }
-  }
-
-  private void deliverUris(List<Uri> uris, String fallbackName, String fallbackMime) {
-    new Thread(() -> {
-      String problem = attachmentError(uris);
-      if (problem == null) {
-        for (Uri uri : uris) {
-          problem = appendUri(uri, fallbackName, fallbackMime);
-          if (problem != null) break;
-        }
-      }
-      String result = problem;
-      runOnUiThread(() -> {
-        if (result != null) {
-          showAttachmentError(result);
-          signalPickEnd(false, "invalid");
-        } else {
-          signalPickEnd(true, "");
-        }
-      });
-    }, "vellum-pick").start();
-  }
-
-  private String attachmentError(List<Uri> uris) {
-    if (uris == null || !NativeAttachmentPolicy.isAllowedCount(uris.size())) {
-      return "Choose between 1 and " + NativeAttachmentPolicy.MAX_FILES + " attachments.";
-    }
-    for (Uri uri : uris) {
-      String problem = attachmentError(uri);
-      if (problem != null) return problem;
-    }
-    return null;
   }
 
   private String attachmentSelectionMessage(int acceptedCount, List<String> refusedReasons) {
@@ -1983,39 +1884,6 @@ public class MainActivity extends Activity {
 
   private void showAttachmentError(String message) {
     runOnUiThread(() -> android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_LONG).show());
-  }
-
-  private void launchAttachChooser() {
-    try {
-      dropCameraOutput();
-      createCameraOutput();
-      pickerUris.clear();
-
-      Intent files = new Intent(Intent.ACTION_GET_CONTENT);
-      files.addCategory(Intent.CATEGORY_OPENABLE);
-      files.setType("*/*");
-      files.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {"image/*", "audio/*", "application/pdf", "text/plain"});
-      files.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-      files.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-
-      Intent gallery = new Intent(Intent.ACTION_PICK);
-      gallery.setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*");
-
-      Intent camera = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-      if (cameraOutput != null) {
-        camera.putExtra(MediaStore.EXTRA_OUTPUT, cameraOutput);
-        camera.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-        camera.setClipData(ClipData.newRawUri("photo", cameraOutput));
-      }
-
-      Intent recorder = new Intent(MediaStore.Audio.Media.RECORD_SOUND_ACTION);
-      Intent chooser = Intent.createChooser(files, "Attach");
-      chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[] {gallery, camera, recorder});
-      startActivityForResult(chooser, PICK_REQ);
-    } catch (Exception error) {
-      dropCameraOutput();
-      signalPickEnd(false, "missing");
-    }
   }
 
   private void signalPicker(boolean ok) {
@@ -2087,161 +1955,6 @@ public class MainActivity extends Activity {
       cursor.close();
     }
     return null;
-  }
-
-  public final class VellumBridge {
-    public void openCamera() {
-      runOnUiThread(() -> {
-        if (checkSelfPermission(android.Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-          signalPickEnd(false, "denied");
-          return;
-        }
-        photoFromJs = true;
-        if (!launchCamera()) {
-          photoFromJs = false;
-          signalPickEnd(false, "missing");
-        }
-      });
-    }
-
-    public void readList() {
-      runOnUiThread(() -> {
-        try {
-          Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
-          intent.addCategory(Intent.CATEGORY_OPENABLE);
-          intent.setType("*/*");
-          intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[] {"image/*", "application/pdf"});
-          intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-          startActivityForResult(Intent.createChooser(intent, "Upload list"), LIST_REQ);
-        } catch (ActivityNotFoundException error) {
-          signalList(false, "", "This phone has no app that can open a photo or PDF.");
-        }
-      });
-    }
-
-    public void openAttach() {
-      runOnUiThread(MainActivity.this::launchAttachChooser);
-    }
-
-    public void openFiles() {
-      runOnUiThread(() -> {
-        try {
-          Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-          intent.addCategory(Intent.CATEGORY_OPENABLE);
-          intent.setType("*/*");
-          intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
-          intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-          startActivityForResult(intent, PICK_REQ);
-        } catch (ActivityNotFoundException error) {
-          signalPickEnd(false, "missing");
-        }
-      });
-    }
-
-    public void openRecorder() {
-      runOnUiThread(() -> {
-        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-          signalPickEnd(false, "denied");
-          return;
-        }
-        try {
-          Intent intent = new Intent(MediaStore.Audio.Media.RECORD_SOUND_ACTION);
-          startActivityForResult(intent, PICK_REQ);
-        } catch (ActivityNotFoundException error) {
-          signalPickEnd(false, "missing");
-        }
-      });
-    }
-
-    public void beginSave(String filename, String mime) {
-      runOnUiThread(() -> {
-        if (savePickerOpen || saveReady || saveBuffer != null) {
-          return;
-        }
-        if (!NativeSavePolicy.isAllowed(filename, mime)) {
-          signalPicker(false);
-          return;
-        }
-        savePickerOpen = true;
-        saveName = filename;
-        saveMime = mime;
-        Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-        intent.addCategory(Intent.CATEGORY_OPENABLE);
-        intent.setType(saveMime);
-        intent.putExtra(Intent.EXTRA_TITLE, saveName);
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-        try {
-          startActivityForResult(intent, SAVE_REQ);
-        } catch (ActivityNotFoundException error) {
-          savePickerOpen = false;
-          signalPicker(false);
-        }
-      });
-    }
-
-    public void writeChunk(String base64) {
-      if (base64 == null || base64.isEmpty()
-          || base64.length() > (MAX_SAVE_CHUNK_BYTES * 4 / 3) + 4) {
-        synchronized (saveLock) {
-          if (saveReady) saveFailed = true;
-        }
-        return;
-      }
-      try {
-        byte[] bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT);
-        synchronized (saveLock) {
-          if (!saveReady || saveBuffer == null || saveFailed) return;
-          if (bytes.length == 0 || bytes.length > MAX_SAVE_CHUNK_BYTES
-              || bytes.length > MAX_SAVE_BYTES - saveBytes) {
-            saveFailed = true;
-            return;
-          }
-          saveBuffer.write(bytes);
-          saveBytes += bytes.length;
-        }
-      } catch (IllegalArgumentException | IOException error) {
-        synchronized (saveLock) {
-          if (saveReady) saveFailed = true;
-        }
-      }
-    }
-
-    public void finishSave() {
-      final Uri tree;
-      final File buffer;
-      boolean failed;
-      synchronized (saveLock) {
-        if (!saveReady || saveTree == null || saveBuffer == null || saveBufferFile == null) {
-          signalSaved(false);
-          return;
-        }
-        saveReady = false;
-        failed = saveFailed || saveBytes == 0;
-        try {
-          saveBuffer.close();
-        } catch (IOException error) {
-          saveFailed = true;
-        }
-        tree = saveTree;
-        buffer = saveBufferFile;
-        saveTree = null;
-        saveBuffer = null;
-        saveBufferFile = null;
-        saveBytes = 0;
-        failed = failed || saveFailed;
-        saveFailed = false;
-      }
-      if (failed) {
-        deleteSaveBuffer(buffer);
-        signalSaved(false);
-        return;
-      }
-      new Thread(() -> {
-        boolean wrote = writeDocument(tree, buffer);
-        deleteSaveBuffer(buffer);
-        signalSaved(wrote);
-      }, "vellum-save").start();
-    }
   }
 
   private boolean openExternal(Uri uri) {
@@ -2359,62 +2072,8 @@ public class MainActivity extends Activity {
       return;
     }
     if (requestCode == CAMERA_REQ) {
-      Uri taken = cameraOutput;
-      if (photoFromJs) {
-        photoFromJs = false;
-        if (resultCode == RESULT_OK && taken != null) {
-          VellumFileProvider.markReady(taken);
-          List<Uri> uris = new ArrayList<>();
-          uris.add(taken);
-          deliverUris(uris, "Photo.jpg", "image/jpeg");
-        } else {
-          dropCameraOutput();
-          signalPickEnd(false, "");
-        }
-        return;
-      }
       if (upload != null) handleCameraResult(resultCode);
       attachmentPickerMaxItems = NativeAttachmentPolicy.MAX_FILES;
-    }
-    if (requestCode == PICK_REQ) {
-      if (resultCode != RESULT_OK) {
-        dropCameraOutput();
-        signalPickEnd(false, "");
-        return;
-      }
-      List<Uri> uris = new ArrayList<>();
-      if (data != null) {
-        if (data.getClipData() != null) {
-          for (int index = 0; index < data.getClipData().getItemCount(); index++) {
-            uris.add(data.getClipData().getItemAt(index).getUri());
-          }
-        } else if (data.getData() != null) uris.add(data.getData());
-      }
-      Uri shot = cameraOutput;
-      boolean usedShot = false;
-      if (shot != null) {
-        for (Uri uri : uris) {
-          if (shot.equals(uri)) usedShot = true;
-        }
-        if (!usedShot && resultCode == RESULT_OK && cameraOutputFile != null
-            && cameraOutputFile.isFile() && cameraOutputFile.length() > 0) {
-          VellumFileProvider.markReady(shot);
-          uris.add(shot);
-          usedShot = true;
-        }
-        if (!usedShot) dropCameraOutput();
-      }
-      String problem = attachmentError(uris);
-      if (problem != null) {
-        showAttachmentError(problem);
-        dropCameraOutput();
-        signalPickEnd(false, "invalid");
-      } else {
-        for (Uri uri : uris) {
-          if (VellumFileProvider.isRegistered(uri)) VellumFileProvider.markReady(uri);
-        }
-        deliverUris(uris, "Attachment", "application/octet-stream");
-      }
     }
     if (requestCode == SAVE_REQ) {
       savePickerOpen = false;

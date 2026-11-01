@@ -79,6 +79,19 @@ class WebAssetCheckTest(unittest.TestCase):
         self.assertNotIn("addJavascriptInterface", source)
         self.assertNotIn("@JavascriptInterface", source)
 
+    def test_legacy_javascript_bridge_and_chunked_file_hooks_are_absent(self) -> None:
+        source = (Path(__file__).parent / "src/com/vellum/casebook/MainActivity.java").read_text(encoding="utf-8")
+        for dead_symbol in (
+            "VellumBridge",
+            "__vellumFileStart",
+            "__vellumFileChunk",
+            "__vellumFileDone",
+            "evaluateJavascriptAndWait",
+            "appendUri(",
+            "deliverUris(",
+        ):
+            self.assertNotIn(dead_symbol, source)
+
     def test_restore_picker_is_separate_and_attachment_rules_remain_strict(self) -> None:
         source = (Path(__file__).parent / "src/com/vellum/casebook/MainActivity.java").read_text(encoding="utf-8")
         self.assertIn('case "armRestorePicker":', source)
