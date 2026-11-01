@@ -40,8 +40,16 @@ const FORMAT_BY_EXTENSION: Record<string, string> = {
 const WEBVIEW_UNPLAYABLE_MIMES = new Set(["audio/3gpp", "audio/3gpp2", "audio/amr", "audio/x-amr"]);
 const WEBVIEW_UNPLAYABLE_EXTENSIONS = new Set(["3gp", "3gpp", "amr"]);
 
+// The WebView may report M4A under other names; they are all audio/mp4.
+const MIME_ALIASES: Record<string, string> = {
+  "audio/x-m4a": "audio/mp4",
+  "audio/m4a": "audio/mp4",
+  "audio/x-mp4": "audio/mp4",
+};
+
 function normalizedMime(mime: string) {
-  return mime.split(";", 1)[0].trim().toLowerCase();
+  const base = mime.split(";", 1)[0].trim().toLowerCase();
+  return MIME_ALIASES[base] ?? base;
 }
 
 function extensionOf(name: string) {

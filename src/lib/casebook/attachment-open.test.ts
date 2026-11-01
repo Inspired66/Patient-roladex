@@ -357,3 +357,9 @@ test("General notes, procedure and consult audio rows share one opener and fallb
   const styles = readFileSync(new URL("../../styles.css", import.meta.url), "utf8");
   assert.match(styles, /\.file-audio\s*\{[^}]*min-height:\s*3rem/s);
 });
+
+test("M4A aliases play and label as audio/mp4", () => {
+  for (const alias of ["audio/x-m4a", "audio/m4a", "audio/x-mp4", "AUDIO/X-M4A; codecs=mp4a"]) {
+    assert.equal(audioMimeForAttachment("voice-1.m4a", alias), "audio/mp4");
+  }
+});

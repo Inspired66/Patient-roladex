@@ -11,7 +11,7 @@ final class NativeAttachmentPolicy {
 
   private static final Set<String> MIME_TYPES = new HashSet<>(Arrays.asList(
       "image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif", "image/bmp",
-      "audio/mpeg", "audio/mp4", "audio/aac", "audio/wav", "audio/x-wav", "audio/ogg", "audio/webm",
+      "audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/m4a", "audio/x-mp4", "audio/aac", "audio/wav", "audio/x-wav", "audio/ogg", "audio/webm",
       "audio/3gpp", "audio/amr", "application/pdf", "text/plain"));
   private static final Set<String> EXTENSIONS = new HashSet<>(Arrays.asList(
       "jpg", "jpeg", "png", "webp", "gif", "heic", "heif", "bmp", "mp3", "m4a", "aac", "wav",

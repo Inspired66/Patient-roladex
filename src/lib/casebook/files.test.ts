@@ -17,6 +17,18 @@ test("accepts supported MIME types and known extensions", () => {
   assert.equal(result.error, "");
 });
 
+test("accepts M4A under the names the WebView may report", () => {
+  const result = acceptFiles(0, [
+    file("voice-1.m4a", "audio/mp4"),
+    file("voice-2.m4a", "audio/x-m4a"),
+    file("voice-3.m4a", "audio/m4a"),
+    file("voice-4.m4a", "audio/x-mp4"),
+  ]);
+  assert.equal(result.accepted.length, 4);
+  assert.equal(file("x.m4a", "text/html").type, "text/html");
+  assert.equal(acceptFiles(0, [file("voice.m4a", "text/html")]).accepted.length, 0);
+});
+
 test("rejects unsupported, active, and mismatched file types", () => {
   const result = acceptFiles(0, [
     file("payload.html", "text/html"),
