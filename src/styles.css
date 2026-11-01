@@ -1642,3 +1642,15 @@ a.card-contact span {
   color: var(--color-muted);
   font-size: 0.85rem;
 }
+
+.recorder-wrap { position: fixed; inset: 0; z-index: 60; }
+.recorder-panel { text-align: center; padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
+.recorder-state { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 8px 0 0; font-weight: 600; }
+.recorder-dot { width: 12px; height: 12px; border-radius: 50%; background: #9aa0a6; }
+.recorder-dot.is-live { background: #d32f2f; animation: recorder-pulse 1s ease-in-out infinite; }
+.recorder-clock { font-size: 2.5rem; font-variant-numeric: tabular-nums; margin: 8px 0 0; }
+.recorder-hint { min-height: 1.4em; margin: 0 0 12px; color: #d32f2f; font-weight: 600; }
+.recorder-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.recorder-button { flex: 1 1 140px; min-height: 52px; }
+@keyframes recorder-pulse { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { .recorder-dot.is-live { animation: none; } }

@@ -311,3 +311,7 @@ Gates per batch: `npm run typecheck`, `npm run lint`, `npm test`, and `android/b
 - Cleanup: purge at begin, app start, resume and destroy; partial files deleted on error or cancel. A copy can exist from transfer end until the user returns to Vellum, opens another file, or the app restarts.
 - No "show the notice again" control yet; `resetExternalNotice()` exists.
 - AMR and 3GPP audio skips the inline player and requires an explicit "Open in another app" tap; other audio uses `canPlayType` and gets the same handoff option on playback error. Handoff retains the exact accepted MIME, including `audio/3gpp2` and `audio/x-amr`; those MIME additions do not widen attachment selection.
+
+## Chunk 3c notes (live voice recorder)
+
+- The Voice recorder entry now records AAC in `.m4a` inside the app (`VoiceRecorder`, `NativeRecorderPolicy`, `recorder-capture.ts`, `recorder-panel.tsx`). The old `RecordButton`, the `beginMicrophoneCapture`/`endMicrophoneCapture` bridge actions, the WebView microphone grant path and the legacy `RECORD_SOUND_ACTION` chooser are now unused and are removed in chunk 3d.

@@ -202,6 +202,52 @@ class WebAssetCheckTest(unittest.TestCase):
         manifest = (root / "AndroidManifest.xml").read_text(encoding="utf-8")
         self.assertNotIn('android:exported="true"', manifest.split("<provider", 1)[1].split("/>", 1)[0])
 
+    def test_voice_recorder_is_permissioned_private_exclusive_and_released(self) -> None:
+        root = Path(__file__).parent
+        source = (root / "src/com/vellum/casebook/MainActivity.java").read_text(encoding="utf-8")
+        recorder = (root / "src/com/vellum/casebook/VoiceRecorder.java").read_text(encoding="utf-8")
+        policy = (root / "src/com/vellum/casebook/NativeRecorderPolicy.java").read_text(encoding="utf-8")
+        start = source.split("private void startVoiceRecording()", 1)[1].split("\n  private ", 1)[0]
+        self.assertLess(
+            start.index("checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)"),
+            start.index("requestPermissions("),
+        )
+        self.assertIn("Vellum uses the microphone only while you are recording a voice note. Nothing is shared.", start)
+        self.assertIn("NativeRecorderPolicy.canStart(", start)
+        self.assertIn("shouldShowRequestPermissionRationale(android.Manifest.permission.RECORD_AUDIO)", source)
+        # AAC in MPEG-4, mono, capped duration and size, released on every stop path.
+        for needle in ("AudioSource.MIC", "OutputFormat.MPEG_4", "AudioEncoder.AAC", "setMaxDuration",
+                       "setMaxFileSize", "current.release()", "next.release()"):
+            self.assertIn(needle, recorder)
+        self.assertIn("catch (RuntimeException error) {", recorder)
+        # Private cache file with a neutral name, swept at start, resume and destroy.
+        self.assertIn('File.createTempFile("voice-", ".m4a", directory)', source)
+        self.assertIn('new File(getCacheDir(), "voice")', source)
+        self.assertIn("sweepVoiceFiles(true);", source.split("protected void onCreate(", 1)[1].split("\n  private ", 1)[0])
+        self.assertIn("sweepVoiceFiles(false);", source.split("protected void onResume()", 1)[1].split("\n  @Override", 1)[0])
+        self.assertIn("sweepVoiceFiles(true);", source.split("protected void onDestroy()", 1)[1])
+        self.assertIn("stopRecording(\"interrupt\")", source.split("protected void onPause()", 1)[1].split("\n  @Override", 1)[0])
+        self.assertIn("setKeepScreenOn(true)", source)
+        self.assertIn("setKeepScreenOn(false)", source)
+        # One microphone user at a time, in both directions.
+        grant = source.split("private void grantWebAudio(", 1)[1].split("\n  private ", 1)[0]
+        self.assertIn("NativeRecorderPolicy.canGrantWebMicrophone(recorderSession.isActive())", grant)
+        begin = source.split("private void beginMicrophoneCapture(", 1)[1].split("\n  private ", 1)[0]
+        self.assertIn("NativeRecorderPolicy.canGrantWebMicrophone(recorderSession.isActive())", begin)
+        # Control actions: origin-verified, listed, no payload, fixed error text.
+        allowed = source.split("private boolean isActionAllowed(", 1)[1].split("\n  private ", 1)[0]
+        for action in ("stopRecorder", "cancelRecorder"):
+            self.assertIn('case "%s":' % action, allowed)
+        self.assertIn("NativeRecorderPolicy.isControlRequestShape(fieldCount)", source)
+        # Status reaches the page only as fixed scripts for allow-listed codes.
+        notify = source.split("private void notifyRecorder(", 1)[1].split("\n  private ", 1)[0]
+        self.assertIn("NativeRecorderPolicy.scriptFor(code)", notify)
+        self.assertIn("isTrustedCurrentPage()", notify)
+        self.assertNotIn("Log.", recorder)
+        self.assertNotIn("Log.", policy)
+        self.assertNotIn("FOREGROUND_SERVICE", (root / "AndroidManifest.xml").read_text(encoding="utf-8"))
+        self.assertNotIn("foregroundServiceType", (root / "AndroidManifest.xml").read_text(encoding="utf-8"))
+
     def test_android_build_uses_pinned_webkit_and_scans_packaged_assets(self) -> None:
         build = Path(__file__).with_name("build-apk.sh").read_text(encoding="utf-8")
         self.assertIn("export VITE_GROK_EXTENSIONS=0", build)

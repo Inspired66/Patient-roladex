@@ -66,6 +66,7 @@ import java.util.concurrent.TimeUnit;
 public class MainActivity extends Activity {
   private static final int FILE_REQ = 1001;
   private static final int CAMERA_REQ = 1004;
+  private static final int REC_REQ = 2003;
   private static final int MIC_REQ = 2001;
   private static final int CAM_REQ = 2002;
   private static final int SAVE_REQ = 1003;
@@ -121,6 +122,16 @@ public class MainActivity extends Activity {
   private String pendingMicRequestId;
   private String pendingCameraRequestId;
   private boolean cameraPermissionPending;
+  private final NativeRecorderPolicy.Session recorderSession = new NativeRecorderPolicy.Session();
+  private final VoiceRecorder voiceRecorder = new VoiceRecorder();
+  private File voiceFile;
+  private long voiceStartedAt;
+  private boolean recorderPermissionPending;
+  private boolean activityPaused;
+  private File heldVoiceFile;
+  private String heldVoiceStatus;
+  private android.app.AlertDialog recorderDialog;
+  private android.media.AudioManager.OnAudioFocusChangeListener recorderFocus;
   private android.app.AlertDialog cameraDialog;
   private boolean cameraShrink = true;
   private final java.util.concurrent.ExecutorService cameraExecutor =
@@ -140,6 +151,7 @@ public class MainActivity extends Activity {
     super.onCreate(savedInstanceState);
     // A killed process can leave capture files behind: nothing in flight survives a restart.
     sweepCameraFiles(true);
+    sweepVoiceFiles(true);
     openTransfer = new NativeOpenPolicy.Transfer(openRoot());
     dropOpenCopies();
     webView = new WebView(this);
@@ -208,6 +220,10 @@ public class MainActivity extends Activity {
       @Override
       public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
         if (!isTrustedCurrentPage()) {
+          callback.onReceiveValue(null);
+          return true;
+        }
+        if (recorderSession.isActive()) {
           callback.onReceiveValue(null);
           return true;
         }
@@ -380,6 +396,10 @@ public class MainActivity extends Activity {
         case "requestCamera":
           requestCamera(id);
           break;
+        case "stopRecorder":
+        case "cancelRecorder":
+          controlRecorder(id, action, request.length());
+          break;
         case "armRestorePicker":
           armRestorePicker(id, payload);
           break;
@@ -486,6 +506,8 @@ public class MainActivity extends Activity {
       case "beginMicrophoneCapture":
       case "endMicrophoneCapture":
       case "requestCamera":
+      case "stopRecorder":
+      case "cancelRecorder":
       case "armRestorePicker":
       case "armAttachmentPicker":
       case "readList":
@@ -550,7 +572,7 @@ public class MainActivity extends Activity {
       return;
     }
     clearMicrophoneCapture();
-    if (!isTrustedCurrentPage()) {
+    if (!isTrustedCurrentPage() || !NativeRecorderPolicy.canGrantWebMicrophone(recorderSession.isActive())) {
       sendNativeResult(requestId, statusResult("status", "denied"));
       return;
     }
@@ -1283,11 +1305,9 @@ public class MainActivity extends Activity {
         case NativeAttachmentPickerPolicy.CAMERA:
           startCameraCapture();
           return;
-        case NativeAttachmentPickerPolicy.RECORDER: {
-          Intent intent = new Intent(MediaStore.Audio.Media.RECORD_SOUND_ACTION);
-          startActivityForResult(intent, FILE_REQ);
+        case NativeAttachmentPickerPolicy.RECORDER:
+          startVoiceRecording();
           return;
-        }
         default:
           showAttachmentError("That attachment option is not available.");
           finishUpload(null);
@@ -1299,10 +1319,7 @@ public class MainActivity extends Activity {
         finishUpload(null);
         return;
       }
-      showAttachmentError(
-          NativeAttachmentPickerPolicy.RECORDER.equals(request.purpose)
-                  ? "This phone has no voice recorder app available."
-                  : "This phone has no app that can select that type of file.");
+      showAttachmentError("This phone has no app that can select that type of file.");
       dropCameraOutput();
       finishUpload(null);
     }
@@ -1572,8 +1589,265 @@ public class MainActivity extends Activity {
     }
   }
 
+  private File voiceDirectory() {
+    return new File(getCacheDir(), "voice");
+  }
+
+  private void sweepVoiceFiles(boolean everything) {
+    File[] files = voiceDirectory().listFiles();
+    if (files == null) return;
+    long now = System.currentTimeMillis();
+    for (File file : files) {
+      if (file.equals(voiceFile) || file.equals(heldVoiceFile)) continue;
+      if (!everything && !NativeRecorderPolicy.isStale(now - file.lastModified())) continue;
+      VellumFileProvider.forget(file);
+      file.delete();
+    }
+  }
+
+  private void notifyRecorder(String code) {
+    final String script = NativeRecorderPolicy.scriptFor(code);
+    if (script == null) return;
+    runOnUiThread(() -> {
+      if (webView != null && isTrustedCurrentPage()) webView.evaluateJavascript(script, null);
+    });
+  }
+
+  private void endRecorderAttempt(String status) {
+    recorderSession.finish();
+    recorderPermissionPending = false;
+    notifyRecorder(status);
+    finishUpload(null);
+  }
+
+  // The recorder is started only from the armed picker path, never by the page directly.
+  private void startVoiceRecording() {
+    boolean webMic = micCaptureArmed || micCaptureActive || micFromBridge;
+    if (!NativeRecorderPolicy.canStart(recorderSession.isActive(), webMic, pendingMicRequestId != null)
+        || !recorderSession.begin()) {
+      notifyRecorder(NativeRecorderPolicy.BUSY);
+      finishUpload(null);
+      return;
+    }
+    notifyRecorder(NativeRecorderPolicy.PROCESSING);
+    if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+      beginVoiceRecording();
+      return;
+    }
+    recorderPermissionPending = true;
+    recorderDialog = new android.app.AlertDialog.Builder(this)
+        .setTitle("Use the microphone?")
+        .setMessage("Vellum uses the microphone only while you are recording a voice note. Nothing is shared.")
+        .setCancelable(true)
+        .setPositiveButton("Continue", (dialog, which) -> {
+          if (recorderPermissionPending) {
+            requestPermissions(new String[] {android.Manifest.permission.RECORD_AUDIO}, REC_REQ);
+          }
+        })
+        .setNegativeButton("Not now", (dialog, which) -> {
+          if (recorderPermissionPending) endRecorderAttempt(NativeRecorderPolicy.CANCELLED);
+        })
+        .setOnCancelListener(dialog -> {
+          if (recorderPermissionPending) endRecorderAttempt(NativeRecorderPolicy.CANCELLED);
+        })
+        .create();
+    recorderDialog.show();
+  }
+
+  private void onRecorderPermissionResult(boolean granted) {
+    recorderPermissionPending = false;
+    if (!recorderSession.isActive() || recorderSession.isRecording()) return;
+    if (!granted) {
+      endRecorderAttempt(
+          NativeRecorderPolicy.statusAfterDenial(
+              shouldShowRequestPermissionRationale(android.Manifest.permission.RECORD_AUDIO)));
+      return;
+    }
+    if (upload == null) {
+      recorderSession.finish();
+      return;
+    }
+    beginVoiceRecording();
+  }
+
+  private void beginVoiceRecording() {
+    File file = null;
+    try {
+      File directory = voiceDirectory();
+      if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("storage");
+      file = File.createTempFile("voice-", ".m4a", directory);
+    } catch (IOException error) {
+      endRecorderAttempt(NativeRecorderPolicy.FAILED);
+      return;
+    }
+    voiceFile = file;
+    boolean started = voiceRecorder.start(file, new VoiceRecorder.Listener() {
+      @Override
+      public void onLimit() {
+        runOnUiThread(() -> {
+          if (recorderSession.isRecording()) stopRecording("limit");
+        });
+      }
+
+      @Override
+      public void onError() {
+        runOnUiThread(() -> {
+          if (recorderSession.isRecording()) stopRecording("error");
+        });
+      }
+    });
+    if (!started) {
+      file.delete();
+      voiceFile = null;
+      endRecorderAttempt(NativeRecorderPolicy.NO_MIC);
+      return;
+    }
+    recorderSession.markRecording();
+    voiceStartedAt = SystemClock.elapsedRealtime();
+    if (webView != null) webView.setKeepScreenOn(true);
+    requestRecorderFocus();
+    notifyRecorder(NativeRecorderPolicy.RECORDING);
+  }
+
+  private void requestRecorderFocus() {
+    try {
+      android.media.AudioManager audio = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+      if (audio == null) return;
+      recorderFocus = change -> {
+        if (change == android.media.AudioManager.AUDIOFOCUS_LOSS
+            || change == android.media.AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
+          runOnUiThread(() -> {
+            if (recorderSession.isRecording()) stopRecording("interrupt");
+          });
+        }
+      };
+      audio.requestAudioFocus(
+          recorderFocus,
+          android.media.AudioManager.STREAM_MUSIC,
+          android.media.AudioManager.AUDIOFOCUS_GAIN_TRANSIENT);
+    } catch (RuntimeException ignored) {
+      recorderFocus = null;
+    }
+  }
+
+  private void releaseRecorderFocus() {
+    try {
+      android.media.AudioManager audio = (android.media.AudioManager) getSystemService(AUDIO_SERVICE);
+      if (audio != null && recorderFocus != null) audio.abandonAudioFocus(recorderFocus);
+    } catch (RuntimeException ignored) {
+      /* nothing held */
+    }
+    recorderFocus = null;
+  }
+
+  private byte[] readHeader(File file) {
+    byte[] header = new byte[12];
+    try (InputStream input = new FileInputStream(file)) {
+      int total = 0;
+      while (total < header.length) {
+        int read = input.read(header, total, header.length - total);
+        if (read < 0) break;
+        total += read;
+      }
+      return total >= 8 ? header : null;
+    } catch (IOException error) {
+      return null;
+    }
+  }
+
+  private void controlRecorder(String requestId, String action, int fieldCount) {
+    boolean stop = "stopRecorder".equals(action);
+    boolean allowed = NativeRecorderPolicy.isControlRequestShape(fieldCount)
+        && (stop ? recorderSession.canStop() : recorderSession.canCancel());
+    if (!allowed) {
+      sendNativeError(requestId, "There is no recording to " + (stop ? "stop." : "cancel."));
+      return;
+    }
+    sendNativeResult(requestId, new JSONObject());
+    if (recorderSession.isRecording()) {
+      stopRecording(stop ? "stop" : "cancel");
+    } else if (!stop) {
+      if (recorderDialog != null) recorderDialog.dismiss();
+      endRecorderAttempt(NativeRecorderPolicy.CANCELLED);
+    }
+  }
+
+  // Ends the recording for any reason ("stop", "limit", "interrupt", "cancel", "error"), always
+  // releasing the microphone, and turns the file into an attachment or removes it.
+  private void stopRecording(String reason) {
+    if (!recorderSession.isRecording()) return;
+    long elapsed = SystemClock.elapsedRealtime() - voiceStartedAt;
+    File file = voiceFile;
+    voiceFile = null;
+    recorderSession.finish();
+    if (webView != null) webView.setKeepScreenOn(false);
+    releaseRecorderFocus();
+    if (!"cancel".equals(reason)) notifyRecorder(NativeRecorderPolicy.PROCESSING);
+    boolean clean = voiceRecorder.stop() && !"error".equals(reason);
+    boolean valid = clean
+        && file != null
+        && NativeRecorderPolicy.isValidRecording(file.length(), readHeader(file));
+    String status = NativeRecorderPolicy.outcomeStatus(reason, elapsed, clean, valid);
+    boolean keep = NativeRecorderPolicy.DONE.equals(status)
+        || NativeRecorderPolicy.LIMIT_REACHED.equals(status)
+        || NativeRecorderPolicy.INTERRUPTED.equals(status);
+    if (!keep) {
+      if (file != null) file.delete();
+      notifyRecorder(status);
+      finishUpload(null);
+      return;
+    }
+    if (NativeRecorderPolicy.INTERRUPTED.equals(status) && activityPaused) {
+      heldVoiceFile = file;
+      heldVoiceStatus = status;
+      return;
+    }
+    handOverVoice(file, status);
+  }
+
+  // The page's chooser callback receives the file; if it is gone the file is deleted.
+  private void handOverVoice(File file, String status) {
+    ValueCallback<Uri[]> callback = upload;
+    if (callback == null || file == null || !file.isFile()) {
+      if (file != null) file.delete();
+      notifyRecorder(NativeRecorderPolicy.FAILED);
+      return;
+    }
+    upload = null;
+    Uri uri = VellumFileProvider.registerVoice(file);
+    VellumFileProvider.markReady(uri);
+    pickerUris.add(uri.toString());
+    notifyRecorder(status);
+    callback.onReceiveValue(new Uri[] {uri});
+  }
+
+  private void deliverHeldVoice() {
+    File file = heldVoiceFile;
+    String status = heldVoiceStatus;
+    heldVoiceFile = null;
+    heldVoiceStatus = null;
+    if (file != null) handOverVoice(file, status);
+  }
+
+  private void cancelVoiceForExit() {
+    if (recorderDialog != null) recorderDialog.dismiss();
+    if (recorderSession.isRecording()) {
+      voiceRecorder.stop();
+      if (voiceFile != null) voiceFile.delete();
+      voiceFile = null;
+    }
+    recorderSession.finish();
+    if (heldVoiceFile != null) heldVoiceFile.delete();
+    heldVoiceFile = null;
+    releaseRecorderFocus();
+  }
+
   private void grantWebAudio(PermissionRequest request) {
     Uri origin = request.getOrigin();
+    if (!NativeRecorderPolicy.canGrantWebMicrophone(recorderSession.isActive())) {
+      request.deny();
+      return;
+    }
     if (!NativeAudioPermissionPolicy.canGrant(
         origin == null ? null : origin.getScheme(),
         origin == null ? null : origin.getHost(),
@@ -2396,6 +2670,10 @@ public class MainActivity extends Activity {
       }
       return;
     }
+    if (requestCode == REC_REQ && recorderPermissionPending) {
+      onRecorderPermissionResult(grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED);
+      return;
+    }
     if (requestCode == CAM_REQ && cameraPermissionPending) {
       onCameraPermissionResult(grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED);
       return;
@@ -2417,10 +2695,16 @@ public class MainActivity extends Activity {
     // Coming back from another app ends the hand-off: grant revoked, temporary copy deleted.
     dropOpenCopies();
     sweepCameraFiles(false);
+    activityPaused = false;
+    deliverHeldVoice();
+    sweepVoiceFiles(false);
   }
 
   @Override
   protected void onPause() {
+    activityPaused = true;
+    // Leaving the app ends a recording: keep what exists, hand it over when the user returns.
+    if (recorderSession.isRecording()) stopRecording("interrupt");
     restorePickerArm.clear();
     attachmentPickerArm.clear();
     if (openTransfer != null) openTransfer.cancel();
@@ -2451,8 +2735,10 @@ public class MainActivity extends Activity {
     clearMigrationWrite();
     dropCameraOutput();
     cameraExecutor.shutdownNow();
+    cancelVoiceForExit();
     if (cameraDialog != null) cameraDialog.dismiss();
     sweepCameraFiles(true);
+    sweepVoiceFiles(true);
     synchronized (saveLock) {
       try {
         if (saveBuffer != null) saveBuffer.close();
@@ -2476,6 +2762,26 @@ public class MainActivity extends Activity {
     private static final java.util.Map<String, File> FILES = new java.util.concurrent.ConcurrentHashMap<>();
     private static final Set<String> READY_FOR_READ =
         Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
+
+    private static final Set<String> VOICE_URIS =
+        Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
+
+    // Voice recordings live at voice/<neutral name>, readable only, deleted after the page reads them.
+    static Uri registerVoice(File file) {
+      Uri uri = new Uri.Builder()
+          .scheme(ContentResolver.SCHEME_CONTENT)
+          .authority(AUTHORITY)
+          .appendPath("voice")
+          .appendPath(file.getName())
+          .build();
+      FILES.put(uri.toString(), file);
+      VOICE_URIS.add(uri.toString());
+      return uri;
+    }
+
+    private static boolean isVoiceUri(Uri uri) {
+      return uri != null && VOICE_URIS.contains(uri.toString());
+    }
 
     static Uri register(File file) {
       Uri uri = new Uri.Builder()
@@ -2513,6 +2819,7 @@ public class MainActivity extends Activity {
       for (java.util.Map.Entry<String, File> entry : FILES.entrySet()) {
         if (file.equals(entry.getValue())) {
           READY_FOR_READ.remove(entry.getKey());
+          VOICE_URIS.remove(entry.getKey());
           FILES.remove(entry.getKey());
         }
       }
@@ -2531,6 +2838,7 @@ public class MainActivity extends Activity {
       String key = uri.toString();
       READY_FOR_READ.remove(key);
       OPEN_TYPES.remove(key);
+      VOICE_URIS.remove(key);
       File file = FILES.remove(key);
       if (file != null && file.exists()) file.delete();
     }
@@ -2543,6 +2851,7 @@ public class MainActivity extends Activity {
     @Override
     public String getType(Uri uri) {
       if (isOpenUri(uri)) return OPEN_TYPES.get(uri.toString());
+      if (isVoiceUri(uri)) return "audio/mp4";
       return isRegistered(uri) ? "image/jpeg" : null;
     }
 
@@ -2571,6 +2880,7 @@ public class MainActivity extends Activity {
         if (!"r".equals(mode)) throw new FileNotFoundException("Unsupported file mode.");
         return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
       }
+      if (isVoiceUri(uri) && !"r".equals(mode)) throw new FileNotFoundException("Unsupported file mode.");
       int flags;
       if ("r".equals(mode)) flags = ParcelFileDescriptor.MODE_READ_ONLY;
       else if ("w".equals(mode) || "wt".equals(mode)) {

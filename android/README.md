@@ -6,6 +6,16 @@ The Archive restore action explicitly arms a one-shot native picker for the trus
 
 Attachment controls use a separate one-shot `armAttachmentPicker` bridge action with an allow-listed purpose (`files`, `photos`, `camera`, or `recorder`) and a remaining item count. Files opens `ACTION_OPEN_DOCUMENT` with the existing attachment MIME allow-list; Photos uses Android's Photo Picker on API 33+ and an image-only `ACTION_GET_CONTENT` fallback on older versions. Voice recorder routes to the system recorder intent.
 
+### Voice recorder
+
+- The Voice recorder entry records inside Vellum with `MediaRecorder` (microphone source, AAC in MPEG-4, mono, 44.1 kHz, 64 kbps) and attaches an `.m4a` (`audio/mp4`) file, so it plays in the in-app player. The system recorder app (which produced AMR) is no longer used.
+- `RECORD_AUDIO` is requested only when the entry is chosen, after the explanation "Vellum uses the microphone only while you are recording a voice note. Nothing is shared." Denied and permanently denied map to fixed messages and never re-prompt by themselves.
+- Limits: 180 seconds, 3 MiB (`setMaxDuration`/`setMaxFileSize`); reaching one stops cleanly and attaches the recording. Under about 1 second is refused as too short. Before hand-off `NativeRecorderPolicy` checks non-zero length, the 4 MiB rule and an `ftyp` MPEG-4 header.
+- Foreground only: no service and no new permission. The screen stays on while recording. `onPause`, audio focus loss or a call stops the recording and keeps the partial file; it is handed to the page when the user returns, or deleted if the page is gone.
+- One microphone user at a time: the recorder refuses to start while a WebView microphone grant or capture is armed or active, and WebView microphone requests and `beginMicrophoneCapture` are denied while it is active.
+- Files are `cache/voice/voice-<n>.m4a`, served read-only by the non-exported `VellumFileProvider`, deleted once the page has read them or on cancel or error, and swept at start, on resume (older than 10 minutes) and on destroy.
+- Page control: `stopRecorder` and `cancelRecorder` (no payload, origin-verified, refused when no recording is active; cancel is also accepted during the permission step). Native reports progress by calling `window.__vellumRecorderStatus('<code>')` with a fixed script for an allow-listed code only.
+
 ### Camera capture
 
 - The Camera entry asks for `CAMERA` only when chosen. If it is not granted, a short explanation dialog comes first ("Use the camera?"), then the system prompt. A refusal is reported to the page as `denied` (can be asked again) or `settings` (permanent: only the phone's Settings can change it). It never re-prompts by itself.

@@ -2,6 +2,15 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Camera, FileText, Images, Mic, Paperclip } from "lucide-react";
 import { callNative, hasNativeMessageBridge } from "@/lib/casebook/native-bridge";
 import { useBackLayer } from "@/lib/casebook/back";
+import { RecorderPanel } from "@/components/casebook/recorder-panel";
+import {
+  RECORDER_IDLE,
+  elapsedSeconds,
+  nextRecorderState,
+  recorderRequest,
+  recorderWatchdogMs,
+  type RecorderState,
+} from "@/lib/casebook/recorder-capture";
 import { MAX_FILES } from "@/lib/casebook/files";
 import {
   ATTACHMENT_MENU_OPTIONS,
@@ -48,6 +57,12 @@ export function AttachControls({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const cameraActive = useRef(false);
+  const recorderActive = useRef(false);
+  const recorderStateRef = useRef<RecorderState>(RECORDER_IDLE);
+  const recorderStartedAt = useRef(0);
+  const recorderDog = useRef<number | null>(null);
+  const [recorder, setRecorder] = useState<RecorderState>(RECORDER_IDLE);
+  const [elapsed, setElapsed] = useState(0);
   const titleId = useId();
   const limit = attachmentMenuLimitState(disabled ? 0 : remaining);
 
@@ -81,6 +96,59 @@ export function AttachControls({
       if (watchdog.current !== null) window.clearTimeout(watchdog.current);
     };
   }, []);
+
+  function applyRecorder(next: RecorderState) {
+    recorderStateRef.current = next;
+    setRecorder(next);
+    if (recorderDog.current !== null) window.clearTimeout(recorderDog.current);
+    recorderDog.current = null;
+    const limit = recorderWatchdogMs(next.phase);
+    if (limit === null) {
+      recorderActive.current = false;
+      return;
+    }
+    // If native never answers, free the screen and ask native to drop any recording.
+    recorderDog.current = window.setTimeout(() => {
+      void callNative("cancelRecorder").catch(() => undefined);
+      applyRecorder(RECORDER_IDLE);
+    }, limit);
+  }
+
+  function endRecorder() {
+    if (recorderActive.current) applyRecorder(RECORDER_IDLE);
+  }
+
+  // Native reports recorder progress with fixed status codes; unknown codes change nothing.
+  useEffect(() => {
+    const host = window as Window & { __vellumRecorderStatus?: (code: string) => void };
+    const listener = (code: string) => {
+      if (!recorderActive.current) return;
+      const next = nextRecorderState(recorderStateRef.current, code);
+      if (!next) return;
+      if (next.phase === "recording") recorderStartedAt.current = Date.now();
+      applyRecorder(next);
+      if (next.phase === "idle") setMessage(next.message);
+      else setMessage("");
+    };
+    host.__vellumRecorderStatus = listener;
+    return () => {
+      if (host.__vellumRecorderStatus === listener) delete host.__vellumRecorderStatus;
+      if (recorderDog.current !== null) window.clearTimeout(recorderDog.current);
+      // Leaving the screen never leaves the microphone open.
+      if (recorderActive.current) void callNative("cancelRecorder").catch(() => undefined);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (recorder.phase !== "recording") {
+      setElapsed(0);
+      return;
+    }
+    const tick = () => setElapsed(elapsedSeconds(recorderStartedAt.current, Date.now()));
+    tick();
+    const timer = window.setInterval(tick, 500);
+    return () => window.clearInterval(timer);
+  }, [recorder.phase]);
 
   useBackLayer(open, () => setOpen(false));
 
@@ -131,6 +199,8 @@ export function AttachControls({
       return;
     }
     cameraActive.current = purpose === "camera";
+    recorderActive.current = purpose === "recorder";
+    if (purpose === "recorder") applyRecorder({ phase: "starting", message: "" });
     const config = attachmentPickerConfig(purpose, remaining, { shrink });
     input.accept = config.accept;
     input.multiple = config.multiple;
@@ -141,10 +211,12 @@ export function AttachControls({
           config.payload,
         );
         if (!result?.armed) {
+          endRecorder();
           setMessage("The attachment picker could not be prepared.");
           return;
         }
       } catch {
+        endRecorder();
         setMessage("The attachment picker could not be prepared.");
         return;
       }
@@ -178,6 +250,14 @@ export function AttachControls({
           {limit.disabledReason}
         </p>
       ) : null}
+      {recorder.phase !== "idle" ? (
+        <RecorderPanel
+          phase={recorder.phase}
+          elapsed={elapsed}
+          onStop={() => void callNative(recorderRequest("stopRecorder").action).catch(() => undefined)}
+          onCancel={() => void callNative(recorderRequest("cancelRecorder").action).catch(() => undefined)}
+        />
+      ) : null}
       {processing ? (
         <p className="attach-progress" role="status">
           Preparing photo…
@@ -199,6 +279,7 @@ export function AttachControls({
             cameraActive.current = false;
             endProcessing();
           }
+          endRecorder();
           const list = Array.from(event.target.files ?? []);
           if (list.length) onFiles(list);
           event.target.value = "";
