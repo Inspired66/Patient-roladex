@@ -156,7 +156,7 @@ class WebAssetCheckTest(unittest.TestCase):
         self.assertIn("Intent.EXTRA_MIME_TYPES", source)
         self.assertIn("MediaStore.ACTION_PICK_IMAGES", source)
         self.assertIn('intent.setType("image/*")', source)
-        self.assertIn("MediaStore.Audio.Media.RECORD_SOUND_ACTION", source)
+        self.assertNotIn("RECORD_SOUND_ACTION", source)
         self.assertIn("NativeAttachmentPolicy.isAllowedType(mime, name)", source)
         self.assertIn("NativeAttachmentPolicy.isAllowedSize(size)", source)
         picker = source.split("private void launchAttachmentPicker(", 1)[1].split(
@@ -164,6 +164,8 @@ class WebAssetCheckTest(unittest.TestCase):
         )[0]
         self.assertNotIn("FLAG_GRANT_PERSISTABLE_URI_PERMISSION", picker)
         manifest = (root / "AndroidManifest.xml").read_text(encoding="utf-8")
+        self.assertNotIn("MediaStore.RECORD_SOUND", manifest)
+        self.assertIn('android:mimeType="application/pdf"', manifest)
         permissions = sorted(re.findall(r'uses-permission android:name="([^"]+)"', manifest))
         self.assertEqual(
             permissions,

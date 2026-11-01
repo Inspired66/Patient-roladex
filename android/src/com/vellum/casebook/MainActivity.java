@@ -1134,9 +1134,8 @@ public class MainActivity extends Activity {
       camera.setClipData(ClipData.newRawUri("photo", cameraOutput));
     }
 
-    Intent recorder = new Intent(MediaStore.Audio.Media.RECORD_SOUND_ACTION);
     Intent chooser = Intent.createChooser(files, "Attach");
-    chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[] {gallery, camera, recorder});
+    chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[] {gallery, camera});
     try {
       startActivityForResult(chooser, FILE_REQ);
     } catch (Exception error) {
