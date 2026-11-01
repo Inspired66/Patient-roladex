@@ -230,10 +230,16 @@ class WebAssetCheckTest(unittest.TestCase):
         self.assertIn("setKeepScreenOn(true)", source)
         self.assertIn("setKeepScreenOn(false)", source)
         # One microphone user at a time, in both directions.
-        grant = source.split("private void grantWebAudio(", 1)[1].split("\n  private ", 1)[0]
-        self.assertIn("NativeRecorderPolicy.canGrantWebMicrophone(recorderSession.isActive())", grant)
-        begin = source.split("private void beginMicrophoneCapture(", 1)[1].split("\n  private ", 1)[0]
-        self.assertIn("NativeRecorderPolicy.canGrantWebMicrophone(recorderSession.isActive())", begin)
+        # The WebView never gets a microphone: every page permission request is denied.
+        permission = source.split("public void onPermissionRequest(PermissionRequest request) {", 1)[1].split("\n      }", 1)[0]
+        self.assertIn("request.deny();", permission)
+        self.assertNotIn("grant(", permission)
+        self.assertNotIn("RESOURCE_AUDIO_CAPTURE", source)
+        self.assertNotIn("grantWebAudio", source)
+        self.assertNotIn("beginMicrophoneCapture", source)
+        self.assertNotIn("endMicrophoneCapture", source)
+        self.assertNotIn("NativeAudioPermissionPolicy", source)
+        self.assertIn("NativeRecorderPolicy.canStart(recorderSession.isActive())", start)
         # The provider must resolve voice URIs, or the page reads a recording as empty.
         resolve = source.split("private File resolve(Uri uri)", 1)[1]
         self.assertIn("NativeRecorderPolicy.isVoiceProviderPath(segments)", resolve)

@@ -59,14 +59,9 @@ final class NativeRecorderPolicy {
     return fieldCount == 2;
   }
 
-  // Only one microphone user at a time. A new recording is refused while the recorder is in use or
-  // while the WebView holds, or is about to receive, a microphone grant.
-  static boolean canStart(boolean recorderBusy, boolean webViewMicArmedOrActive, boolean webViewMicRequestPending) {
-    return !recorderBusy && !webViewMicArmedOrActive && !webViewMicRequestPending;
-  }
-
-  // The WebView may not receive a microphone grant while the recorder is recording.
-  static boolean canGrantWebMicrophone(boolean recorderBusy) {
+  // Only one microphone user at a time. The WebView never receives a microphone grant (every page
+  // request is denied), so the only other user is a recording that is already in progress.
+  static boolean canStart(boolean recorderBusy) {
     return !recorderBusy;
   }
 

@@ -67,7 +67,6 @@ public class MainActivity extends Activity {
   private static final int FILE_REQ = 1001;
   private static final int CAMERA_REQ = 1004;
   private static final int REC_REQ = 2003;
-  private static final int MIC_REQ = 2001;
   private static final int CAM_REQ = 2002;
   private static final int SAVE_REQ = 1003;
   private static final int PICK_REQ = 1005;
@@ -88,12 +87,6 @@ public class MainActivity extends Activity {
   private int migrationPort = -1;
   private boolean messageListenerInstalled;
   private ValueCallback<Uri[]> upload;
-  private boolean micFromBridge;
-  private boolean micAsked;
-  private boolean micCaptureArmed;
-  private boolean micCaptureActive;
-  private long micRequestExpiresAt;
-  private long micCaptureArmExpiresAt;
   private boolean camFromBridge;
   private boolean camAsked;
   private boolean backPending;
@@ -119,7 +112,6 @@ public class MainActivity extends Activity {
   private String saveMime = "application/octet-stream";
   private final Map<String, JavaScriptReplyProxy> pendingReplies = new HashMap<>();
   private final Set<Integer> completedMigrationPorts = new HashSet<>();
-  private String pendingMicRequestId;
   private String pendingCameraRequestId;
   private boolean cameraPermissionPending;
   private final NativeRecorderPolicy.Session recorderSession = new NativeRecorderPolicy.Session();
@@ -214,7 +206,8 @@ public class MainActivity extends Activity {
     webView.setWebChromeClient(new WebChromeClient() {
       @Override
       public void onPermissionRequest(PermissionRequest request) {
-        runOnUiThread(() -> grantWebAudio(request));
+        // The page never gets the microphone or camera: recording runs natively (VoiceRecorder).
+        request.deny();
       }
 
       @Override
@@ -386,13 +379,6 @@ public class MainActivity extends Activity {
       }
       pendingReplies.put(id, replyProxy);
       switch (action) {
-        case "beginMicrophoneCapture":
-          beginMicrophoneCapture(id);
-          break;
-        case "endMicrophoneCapture":
-          clearMicrophoneCapture();
-          sendNativeResult(id, new JSONObject());
-          break;
         case "requestCamera":
           requestCamera(id);
           break;
@@ -503,8 +489,6 @@ public class MainActivity extends Activity {
 
   private boolean isActionAllowed(String action) {
     switch (action) {
-      case "beginMicrophoneCapture":
-      case "endMicrophoneCapture":
       case "requestCamera":
       case "stopRecorder":
       case "cancelRecorder":
@@ -564,36 +548,6 @@ public class MainActivity extends Activity {
       return;
     }
     sendNativeResult(requestId, statusResult("armed", true));
-  }
-
-  private void beginMicrophoneCapture(String requestId) {
-    if (pendingMicRequestId != null) {
-      sendNativeError(requestId, "A microphone request is already in progress.");
-      return;
-    }
-    clearMicrophoneCapture();
-    if (!isTrustedCurrentPage() || !NativeRecorderPolicy.canGrantWebMicrophone(recorderSession.isActive())) {
-      sendNativeResult(requestId, statusResult("status", "denied"));
-      return;
-    }
-    if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-      micCaptureArmed = true;
-      micCaptureArmExpiresAt = SystemClock.elapsedRealtime() + 10_000;
-      pendingMicRequestId = requestId;
-      signalMic(true, "granted");
-      return;
-    }
-    if (micAsked && !shouldShowRequestPermissionRationale(android.Manifest.permission.RECORD_AUDIO)) {
-      pendingMicRequestId = requestId;
-      signalMic(false, "settings");
-      openPermissionSettings();
-      return;
-    }
-    pendingMicRequestId = requestId;
-    micAsked = true;
-    micFromBridge = true;
-    micRequestExpiresAt = SystemClock.elapsedRealtime() + 60_000;
-    requestPermissions(new String[] {android.Manifest.permission.RECORD_AUDIO}, MIC_REQ);
   }
 
   private void requestCamera(String requestId) {
@@ -1622,9 +1576,7 @@ public class MainActivity extends Activity {
 
   // The recorder is started only from the armed picker path, never by the page directly.
   private void startVoiceRecording() {
-    boolean webMic = micCaptureArmed || micCaptureActive || micFromBridge;
-    if (!NativeRecorderPolicy.canStart(recorderSession.isActive(), webMic, pendingMicRequestId != null)
-        || !recorderSession.begin()) {
+    if (!NativeRecorderPolicy.canStart(recorderSession.isActive()) || !recorderSession.begin()) {
       notifyRecorder(NativeRecorderPolicy.BUSY);
       finishUpload(null);
       return;
@@ -1842,29 +1794,6 @@ public class MainActivity extends Activity {
     releaseRecorderFocus();
   }
 
-  private void grantWebAudio(PermissionRequest request) {
-    Uri origin = request.getOrigin();
-    if (!NativeRecorderPolicy.canGrantWebMicrophone(recorderSession.isActive())) {
-      request.deny();
-      return;
-    }
-    if (!NativeAudioPermissionPolicy.canGrant(
-        origin == null ? null : origin.getScheme(),
-        origin == null ? null : origin.getHost(),
-        origin == null ? -1 : origin.getPort(),
-        request.getResources(),
-        checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED,
-        micCaptureArmed,
-        micCaptureArmExpiresAt,
-        SystemClock.elapsedRealtime())) {
-      request.deny();
-      return;
-    }
-    micCaptureArmed = false;
-    micCaptureActive = true;
-    request.grant(new String[] {PermissionRequest.RESOURCE_AUDIO_CAPTURE});
-  }
-
   private void openPermissionSettings() {
     Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
     intent.setData(Uri.fromParts("package", getPackageName(), null));
@@ -1873,27 +1802,6 @@ public class MainActivity extends Activity {
     } catch (ActivityNotFoundException ignored) {
       /* no settings */
     }
-  }
-
-  private void signalMic(boolean granted, String reason) {
-    String requestId = pendingMicRequestId;
-    pendingMicRequestId = null;
-    if (requestId == null) return;
-    try {
-      JSONObject result = new JSONObject();
-      result.put("status", granted ? "granted" : reason);
-      sendNativeResult(requestId, result);
-    } catch (JSONException error) {
-      sendNativeError(requestId, "The phone could not prepare the microphone response.");
-    }
-  }
-
-  private void clearMicrophoneCapture() {
-    micFromBridge = false;
-    micCaptureArmed = false;
-    micCaptureActive = false;
-    micRequestExpiresAt = 0;
-    micCaptureArmExpiresAt = 0;
   }
 
   private void signalCam(boolean granted, String reason) {
@@ -2233,35 +2141,6 @@ public class MainActivity extends Activity {
   }
 
   public final class VellumBridge {
-    public void beginMicrophoneCapture() {
-      runOnUiThread(() -> {
-        clearMicrophoneCapture();
-        if (!isTrustedCurrentPage()) {
-          signalMic(false, "denied");
-          return;
-        }
-        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-          micCaptureArmed = true;
-          micCaptureArmExpiresAt = SystemClock.elapsedRealtime() + 10_000;
-          signalMic(true, "granted");
-          return;
-        }
-        if (micAsked && !shouldShowRequestPermissionRationale(android.Manifest.permission.RECORD_AUDIO)) {
-          signalMic(false, "settings");
-          openPermissionSettings();
-          return;
-        }
-        micAsked = true;
-        micFromBridge = true;
-        micRequestExpiresAt = SystemClock.elapsedRealtime() + 60_000;
-        requestPermissions(new String[] {android.Manifest.permission.RECORD_AUDIO}, MIC_REQ);
-      });
-    }
-
-    public void endMicrophoneCapture() {
-      runOnUiThread(MainActivity.this::clearMicrophoneCapture);
-    }
-
     public void requestCamera() {
       runOnUiThread(() -> {
         if (checkSelfPermission(android.Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -2651,25 +2530,6 @@ public class MainActivity extends Activity {
   @Override
   public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
     super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-    if (requestCode == MIC_REQ) {
-      boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
-      if (micFromBridge) {
-        boolean userActionActive = SystemClock.elapsedRealtime() <= micRequestExpiresAt;
-        micFromBridge = false;
-        micRequestExpiresAt = 0;
-        if (granted && userActionActive && isTrustedCurrentPage()) {
-          micCaptureArmed = true;
-          micCaptureArmExpiresAt = SystemClock.elapsedRealtime() + 10_000;
-          signalMic(true, "granted");
-        } else if (granted) {
-          signalMic(false, "denied");
-        } else if (!shouldShowRequestPermissionRationale(android.Manifest.permission.RECORD_AUDIO)) {
-          signalMic(false, "settings");
-          openPermissionSettings();
-        } else signalMic(false, "denied");
-      }
-      return;
-    }
     if (requestCode == REC_REQ && recorderPermissionPending) {
       onRecorderPermissionResult(grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED);
       return;
@@ -2708,19 +2568,6 @@ public class MainActivity extends Activity {
     restorePickerArm.clear();
     attachmentPickerArm.clear();
     if (openTransfer != null) openTransfer.cancel();
-    micCaptureArmed = false;
-    micCaptureActive = false;
-    micCaptureArmExpiresAt = 0;
-    if (!micFromBridge) {
-      clearMicrophoneCapture();
-    }
-    if (webView != null && !micFromBridge) {
-      webView.evaluateJavascript(
-          "window.__vellumAbortRecording&&window.__vellumAbortRecording();"
-              + "window.__vellumMicPause&&window.__vellumMicPause()",
-          null);
-      if (pendingMicRequestId != null) signalMic(false, "denied");
-    }
     super.onPause();
   }
 
@@ -2728,7 +2575,6 @@ public class MainActivity extends Activity {
   protected void onDestroy() {
     restorePickerArm.clear();
     dropOpenCopies();
-    clearMicrophoneCapture();
     if (server != null) server.stop();
     if (migrationServer != null) migrationServer.stop();
     migrationServer = null;

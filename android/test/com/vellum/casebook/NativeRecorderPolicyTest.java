@@ -24,12 +24,8 @@ public final class NativeRecorderPolicyTest {
     check(!NativeRecorderPolicy.isValidRecording(50_000, null), "missing header refused");
 
     // Exclusivity, both directions.
-    check(NativeRecorderPolicy.canStart(false, false, false), "start when nothing holds the microphone");
-    check(!NativeRecorderPolicy.canStart(true, false, false), "no second recording");
-    check(!NativeRecorderPolicy.canStart(false, true, false), "refused while WebView capture is armed or active");
-    check(!NativeRecorderPolicy.canStart(false, false, true), "refused while a WebView microphone request is pending");
-    check(!NativeRecorderPolicy.canGrantWebMicrophone(true), "WebView grant denied while recording");
-    check(NativeRecorderPolicy.canGrantWebMicrophone(false), "WebView grant allowed when idle");
+    check(NativeRecorderPolicy.canStart(false), "start when nothing holds the microphone");
+    check(!NativeRecorderPolicy.canStart(true), "no second recording");
 
     // Session: stop only while recording, cancel while starting or recording.
     NativeRecorderPolicy.Session session = new NativeRecorderPolicy.Session();
