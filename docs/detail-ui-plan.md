@@ -1,6 +1,6 @@
 # Patient detail screen: plan (branch `detail-ui`)
 
-**Status: revision 2 (see section 0). Batch 1 approved with the changes in section 0; everything after Batch 1 awaits approval at each phase boundary.**
+**Status: historical plan, updated through Batch 3 chunk 3d. Batches 1–3 are implemented; Batch 4 has not started.** Section 0 records the approved design decisions; later implementation notes record shipped behavior.
 
 ## 0. Revision 2: decisions that override the text below
 
@@ -19,7 +19,9 @@ Terminology: **History** = the combined timeline of procedures (`Surgery`) and c
 
 ---
 
-## 1. How it works today (findings)
+## 1. Starting-point findings (historical snapshot)
+
+The findings below describe the tree when this plan began, not the current implementation. In particular, sections 1.4 and 1.5 are superseded by the completed chunk 2c, 3b, 3c, and 3d notes below.
 
 ### 1.1 Detail screen and History
 
@@ -45,7 +47,7 @@ Terminology: **History** = the combined timeline of procedures (`Surgery`) and c
 - Attachments persist **at attach time** in `storeIncoming` (`detail.tsx:40-60`): `putBlob` first, then metadata through `patchPatient`/`updateSurgery`/`updateConsult`. On failure the already-written blobs are deleted.
 - Limits live in `files.ts:8-10` (`MAX_FILE_BYTES` 4 MiB, `MAX_FILES` 8, `MAX_RECORDING_SECONDS` 180) and `acceptFiles` (`:16-39`). Type validation: `isSupportedAttachmentMetadata` (`files.ts:84`) mirrors `NativeAttachmentPolicy`.
 
-### 1.4 Attachment flow (web and native)
+### 1.4 Attachment flow at plan start (superseded)
 
 - `AttachControls` (`attach.tsx`) is one paperclip `icon-btn` (`aria-label="Attach"`) that clicks a hidden `<input type="file" multiple accept=…>`. It is used four times: `detail.tsx:482, 559, 671` and `forms.tsx:401` (new-procedure form, files held as pending blobs until "Save procedure").
 - On Android, the WebView calls `onShowFileChooser` (`MainActivity.java:193`) → `launchNativeChooser` (`:966`). That builds **one system chooser**: `ACTION_GET_CONTENT */*` (multi) plus initial intents for gallery (`ACTION_PICK` MediaStore), system camera (`ACTION_IMAGE_CAPTURE` with `EXTRA_OUTPUT`) and `RECORD_SOUND`. Results are handled in `onActivityResult` `FILE_REQ` (`:1688-1710`). Each URI is validated and handed back to the WebView as the chooser result. **The bytes never cross the `VellumNative` bridge**: Chromium reads the `content://` URI itself and the `File` is blob-store backed.
@@ -54,7 +56,7 @@ Terminology: **History** = the combined timeline of procedures (`Surgery`) and c
 - There is also a **dead legacy path**: inner class `VellumBridge` (`:1443`; `addJavascriptInterface` is absent and asserted by `test-security-hardening.py:78`), `launchAttachChooser` (`:1339`), `deliverUris`/`appendUri` (`:1220-1284`, which stream 48 KiB base64 chunks through `evaluateJavascript` to `window.__vellumFileStart/Chunk/Done`). **Nothing in `src/` defines those `__vellumFile*` hooks**, so this path cannot run.
 - Bridge: `VellumNative` via `WebViewCompat.addWebMessageListener`, exact origin, main frame only (`:158-165`, `:300-330`). `handleNativeMessage` (`:331`) caps `id` ≤ 96, rejects duplicate in-flight ids, checks `isActionAllowed` (`:440`). Actions: `beginMicrophoneCapture`, `endMicrophoneCapture`, `requestCamera`, `readList`, `beginSave`/`writeChunk`/`finishSave`, plus migration actions. Save chunks are ≤ 48 KiB, total ≤ `MAX_SAVE_BYTES` 64 MiB (`:75`, `:577`), written to a cache temp file, not memory.
 
-### 1.5 Audio / RecordButton
+### 1.5 Audio / RecordButton at plan start (superseded by chunks 3c and 3d)
 
 - Policy: `NativeAudioPermissionPolicy.canGrant` requires https + host + port, OS permission, **armed** capture, arm unexpired (10 s) and exactly `AUDIO_CAPTURE`. `beginMicrophoneCapture` (`MainActivity.java:475`) arms it (requesting `RECORD_AUDIO` at the point of use if needed); `grantWebAudio` (`:1078`) consumes the arm; `onPause` (`:1862`) clears it and calls `window.__vellumAbortRecording`/`__vellumMicPause`; `onDestroy` clears it.
 - `RecordButton` (`record.tsx:22`): `getUserMedia({audio})` + `MediaRecorder` (opus/webm preferred), countdown from `MAX_RECORDING_SECONDS`, `requestPhoneMicrophone`/`endPhoneMicrophoneCapture` (`archive.ts:554-568`), registers `window.__vellumAbortRecording`. **It is not imported anywhere** (grep: only `record.tsx` itself), so today audio can be attached only via the system recorder intent in the chooser.
@@ -272,13 +274,13 @@ Gates per batch: `npm run typecheck`, `npm run lint`, `npm test`, and `android/b
 
 ## 5. Open questions (need your decision)
 
-1. **Camera video?** Should live camera also allow video? Default is **photo only**. Video would need new video MIME types in both policies, and a real size/duration policy against the 30 MB budget.
+1. ~~**Camera video?**~~ **Resolved (Chunk 3b):** Camera remains photo-only; no video MIME types or capture path are added.
 2. ~~Existing patient-level attachments~~ **Resolved (section 0):** feature removed; field dropped on load, orphan blobs deleted.
-3. **Opening PDFs:** (a) native viewer handoff (new bridge actions, transient FileProvider copy; recommended), or (b) in-app preview for images/audio/text only and show "Cannot preview" for PDF.
-4. **Streaming route:** accept my recommendation (system pickers hand URIs to the WebView, bytes never cross the bridge; chunked only for backup/open), or must picked bytes go through the bridge in chunks?
+3. ~~**Opening PDFs**~~ **Resolved (Chunk 2c-2):** PDFs and unsupported formats use the native, read-only viewer hand-off; images, playable audio, and text use the shared in-app opener.
+4. ~~**Streaming route**~~ **Resolved (Chunk 2c-2 / 3d):** picked attachments are returned through the system picker URI to the WebView; the old `__vellumFile*` inbound-to-page bridge was unused and removed. Chunked actions remain only for active save, external-open, and migration flows.
 5. ~~Attachment date~~ **Resolved (section 0):** `addedAt` on new files only; owner's date when missing.
-6. **Camera compression default:** on for camera only (recommended), or off?
-7. **Cleanup:** may I delete the unreachable legacy `VellumBridge`/`launchAttachChooser`/`appendUri` code and the unused `RecordButton` in batch 3?
+6. ~~**Camera compression default**~~ **Resolved (Chunk 3b):** Shrink camera photos is on by default, with a visible off switch; it applies only to Camera.
+7. ~~**Cleanup**~~ **Resolved (Chunk 3d):** the unregistered `VellumBridge`, its legacy chooser and chunked-file methods, and the unused `RecordButton` were removed. The unarmed `launchNativeChooser` remains as a live `onShowFileChooser` fallback; its system-recorder entry was removed, while the Files/Gallery/Camera fallback remains.
 8. ~~Archive v2 scope~~ **Resolved (section 0):** `VELLUM2` and the raised save cap withdrawn; two-part backup instead.
 9. ~~Search~~ **Resolved (section 0):** consult Doctor/Medical centre are searchable (Batch 1).
 10. Remove on attachments has no confirmation today; leave as is?
@@ -314,4 +316,11 @@ Gates per batch: `npm run typecheck`, `npm run lint`, `npm test`, and `android/b
 
 ## Chunk 3c notes (live voice recorder)
 
-- The Voice recorder entry now records AAC in `.m4a` inside the app (`VoiceRecorder`, `NativeRecorderPolicy`, `recorder-capture.ts`, `recorder-panel.tsx`). The old `RecordButton`, the `beginMicrophoneCapture`/`endMicrophoneCapture` bridge actions, the WebView microphone grant path and the legacy `RECORD_SOUND_ACTION` chooser are now unused and are removed in chunk 3d.
+- The Voice recorder entry records AAC in `.m4a` inside the app (`VoiceRecorder`, `NativeRecorderPolicy`, `recorder-capture.ts`, `recorder-panel.tsx`). The old web `RecordButton` and page-microphone helpers were removed in chunk 3d. The native WebView microphone grant path is also removed; `onPermissionRequest` now denies every WebView permission request, and the native recorder is the only microphone consumer.
+
+## Chunk 3d notes (dead-code removal, complete)
+
+- Removed the unused `RecordButton` and its microphone helpers/styles, then removed the WebView mic grant actions/policy and the old `requestCamera` action. Native camera and recorder continue through the shared, one-shot attachment picker.
+- Removed the unregistered `VellumBridge`, its duplicate save/picker methods, `__vellumFile*` chunked attachment delivery path, `PICK_REQ` handling, and related dead helpers. The active `VellumNative` message actions and save/open transfer paths remain.
+- Removed the legacy system `RECORD_SOUND_ACTION` from the unarmed chooser fallback and its manifest `<queries>` entry. The existing unarmed `ACTION_GET_CONTENT` fallback remains; the `VIEW` package-visibility entries for attachment hand-off remain.
+- `android/test-security-hardening.py` asserts the removed bridge/actions stay absent and WebView permission requests remain unconditionally denied. No picker, camera, recorder, attachment limit, backup, restore, or opener behavior was intentionally changed.

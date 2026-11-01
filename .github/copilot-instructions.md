@@ -22,19 +22,25 @@ Also read `AGENTS.md` (platform contract) and `docs/architecture-review.md` (sta
 ## WebView and bridge rules
 
 - The only trusted page origin is `https://appassets.androidplatform.net` (port default or 443), no user-info (`NativeOriginPolicy`). Do not change the origin.
-- The bridge is `VellumNative`, installed with `WebViewCompat.addWebMessageListener` for exactly that origin. Messages are accepted only from the main frame and a trusted bridge origin. Never use `addJavascriptInterface` / `@JavascriptInterface` (a test asserts they are absent).
+- The only bridge is `VellumNative`, installed with `WebViewCompat.addWebMessageListener` for exactly that origin. Messages are accepted only from the main frame and a trusted bridge origin. The old `VellumBridge` and all `addJavascriptInterface` / `@JavascriptInterface` use must stay absent (a test asserts this).
 - Every bridge action must: be listed in `isActionAllowed` (trusted page; migration-write actions only on the trusted migration page), validate `id` (non-empty, at most 96 chars) and every payload field (type, length, range), cap sizes, return fixed non-sensitive error text, and be one-shot by `id`. Never build JavaScript strings from data for `evaluateJavascript`.
+- The attachment menu arms one allowed purpose (`files`, `photos`, `camera`, `recorder`) with `armAttachmentPicker`; the arm is one-shot and expires after 10 seconds. Native must consume it through the trusted page's file chooser. Do not add a parallel picker action or bypass this flow.
 - WebView settings that must stay: file access off (including file-URL access), mixed content `NEVER_ALLOW`, WebView debugging off, `WebViewAssetLoader` for assets, navigation allow-list (everything else opens externally), `shouldInterceptRequest` blocks other requests.
+- `NativeOriginPolicy` owns the trusted origin; `NativeAttachmentPolicy` owns allowed attachment types/count/size; picker and restore policies own their arm/payload/file checks; `NativeSavePolicy` owns save names/MIME; `NativeOpenPolicy` owns the external-view transfer; camera and recorder policies own capture limits/status/path validation; `NativeWebAssetMime` owns packaged asset MIME. Keep these rules Android-free and test them in Java.
 
-## Microphone (`NativeAudioPermissionPolicy`)
+## Microphone and status callbacks
 
-A WebView audio grant is allowed only when all hold: scheme `https`, host `appassets.androidplatform.net`, port default/443, `RECORD_AUDIO` granted by the OS, capture explicitly armed by a native-side request, arm not expired (10 s), and exactly one requested resource, `android.webkit.resource.AUDIO_CAPTURE`. Capture state is cleared on `onPause` and `onDestroy`. Request `RECORD_AUDIO` at point of use only. Any new audio consumer must go through the same arming/policy path and must not run concurrently with another consumer.
+- `onPermissionRequest` unconditionally denies WebView audio and camera requests. `NativeAudioPermissionPolicy` and the page microphone grant actions are removed; do not restore them. The native `VoiceRecorder` requests `RECORD_AUDIO` only when the user chooses Voice recorder. `NativeRecorderPolicy.canStart(recorderSession.isActive())` ensures a second native recording cannot start while one is active.
+- Camera and recorder page status callbacks use fixed scripts selected from the allow-listed codes in `NativeCameraPolicy` and `NativeRecorderPolicy`; unknown codes are rejected. Send status only to the trusted page and never interpolate patient data, filenames, URIs or file contents into JavaScript.
 
 ## Attachments (`NativeAttachmentPolicy`, `src/lib/casebook/files.ts`)
 
 - Allowed types: jpeg, png, webp, gif, heic, heif, bmp, mp3/mpeg, mp4/m4a, aac, wav, ogg, webm, 3gpp, amr audio, pdf, plain text (by MIME, or by extension when MIME is empty or `application/octet-stream`). Keep the native and web lists identical.
 - Limits: 4 MiB per file, 8 files per record, recordings 180 s. Enforce size while reading, not after.
 - Camera captures go to `cacheDir/camera` through the non-exported `VellumFileProvider`; never write patient files to shared storage or MediaStore.
+- The provider exposes only `cache/open/`, `cache/camera/`, and `cache/voice/`. Open hand-off copies are purged at app start, on resume, before a new hand-off, and on destroy. Camera and voice cache sweeps remove all files at app start/destroy and stale files on resume; preserve the active or held recording until delivery/cancel.
+- `NativeOpenPolicy` governs the read-only external-view hand-off; it uses a bounded sequential transfer and a neutral filename. Camera and voice capture details and cleanup stay in `NativeCameraPolicy` / `NativeRecorderPolicy` and their tested native integrations.
+- A data-only restore may attach indexed files as **Not restored**; keep their metadata and fingerprints intact, and keep the restore-in-progress/orphan-sweep guard. Do not weaken restore atomicity or attachment limits.
 
 ## Tests and gates
 

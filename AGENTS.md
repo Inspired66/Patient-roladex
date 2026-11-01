@@ -357,7 +357,18 @@ never:   build an app for a greeting/number/question; invent imagine_* calls;
 
 This workspace is the **Vellum surgical casebook**, an offline, privacy-critical app shipped as an Android WebView shell (`android/`). Patient data is sensitive, so the App Builder defaults above are narrowed for this repo:
 
-- Read `.github/copilot-instructions.md` before any change; it is the authoritative list of the Vellum security rules (trusted origin, origin-verified `VellumNative` bridge, `NativeAudioPermissionPolicy`, `NativeAttachmentPolicy`, `NativeSavePolicy`, backup exclusion, no logging of patient data, no remote code, no new network calls or permissions without approval).
+- Read `.github/copilot-instructions.md` before any change; it is the authoritative list of the Vellum security rules (trusted origin, origin-verified `VellumNative` bridge, `Native*Policy` classes, backup exclusion, no logging of patient data or file names, no remote code, no new network calls or permissions without approval).
 - Do not change the WebView origin or existing storage keys (`vellum-casebook-v1`, IndexedDB `vellum`) without a migration plan and approval.
 - Gates for any change: `npm run typecheck`, `npm run lint`, `npm test` (includes `android/test-security-hardening.sh`), and `android/build-apk.sh` when native/build files change.
 - Use invented patients only; keep recordings, models and downloaded binaries out of git.
+
+### Current native security contract
+
+- Keep native rules in the Android-free `Native*Policy` classes, with Java tests in `android/test/` registered in `android/test-security-hardening.sh`. Current policies cover origin, attachment types/limits, one-shot picker purposes, restore, save, external open, camera, recorder, and packaged asset MIME.
+- Keep each policy's boundary narrow: `NativeOriginPolicy` validates origin; `NativeAttachmentPolicy` validates attachment MIME/count/size; `NativeAttachmentPickerPolicy` validates picker purposes/arms; `NativeRestorePickerPolicy` validates restore files; `NativeSavePolicy` validates output names/MIME; `NativeOpenPolicy` governs the external viewer transfer; `NativeCameraPolicy` and `NativeRecorderPolicy` own capture limits, file checks and status codes; `NativeWebAssetMime` maps bundled asset MIME.
+- `VellumNative` via `WebViewCompat.addWebMessageListener` is the only bridge. Every action is allow-listed, origin/frame checked, validates its request shape and ID, and is one-shot. The legacy `VellumBridge`, `addJavascriptInterface`, `requestCamera`, page microphone grant path and old chunked-file page hooks are removed.
+- WebView permission requests are always denied. The native recorder alone uses `RECORD_AUDIO`; `NativeRecorderPolicy.canStart` and its session state prevent simultaneous native recordings. Request camera/microphone permissions only at point of use.
+- `armAttachmentPicker` is a one-shot, 10-second arm for `files`, `photos`, `camera`, or `recorder`; the trusted WebView chooser consumes it. Do not bypass the shared picker or add a new action without matching policy and tests.
+- Native status callbacks use fixed scripts from allow-listed codes only (`__vellumCameraStatus`, `__vellumRecorderStatus`) and go only to the trusted page. Never interpolate patient data, names, file names, URIs, or file contents into JavaScript.
+- The non-exported `VellumFileProvider` exposes only `cache/open/`, `cache/camera/`, and `cache/voice/`. Open copies are removed at app start, on resume, before another hand-off, and on destroy. Camera/voice sweeps remove all files at app start/destroy and stale files on resume; active/held voice recordings are preserved until delivered or cancelled.
+- Preserve `FLAG_SECURE`, disabled Android backup and all backup exclusions. Keep restore construction atomic and protect it from the orphan-blob sweep. Never log patient data, audio/transcripts, filenames, or URIs.

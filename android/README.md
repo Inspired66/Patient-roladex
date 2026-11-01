@@ -4,7 +4,7 @@
 
 The Archive restore action explicitly arms a one-shot native picker for the trusted casebook page. Android opens `ACTION_OPEN_DOCUMENT` with a broad MIME type because `.vellum` has no standard MIME type; the native restore policy then accepts only `.vellum` or `.csv` filenames, a verified nonzero size, and files no larger than 64 MiB (the existing native save limit). It does not persist URI access. Attachment selection continues to use `NativeAttachmentPolicy` and its existing type, size, and count limits.
 
-Attachment controls use a separate one-shot `armAttachmentPicker` bridge action with an allow-listed purpose (`files`, `photos`, `camera`, or `recorder`) and a remaining item count. Files opens `ACTION_OPEN_DOCUMENT` with the existing attachment MIME allow-list; Photos uses Android's Photo Picker on API 33+ and an image-only `ACTION_GET_CONTENT` fallback on older versions. Voice recorder routes to the system recorder intent.
+Attachment controls use a separate one-shot `armAttachmentPicker` bridge action with an allow-listed purpose (`files`, `photos`, `camera`, or `recorder`) and a remaining item count. The arm expires after 10 seconds and is consumed by the trusted WebView file chooser. Files opens `ACTION_OPEN_DOCUMENT` with the existing attachment MIME allow-list; Photos uses Android's Photo Picker on API 33+ and an image-only `ACTION_GET_CONTENT` fallback on older versions. The no-arm `ACTION_GET_CONTENT` fallback remains for legacy file inputs, but no longer offers the system recorder.
 
 ### Voice recorder
 
@@ -12,9 +12,15 @@ Attachment controls use a separate one-shot `armAttachmentPicker` bridge action 
 - `RECORD_AUDIO` is requested only when the entry is chosen, after the explanation "Vellum uses the microphone only while you are recording a voice note. Nothing is shared." Denied and permanently denied map to fixed messages and never re-prompt by themselves.
 - Limits: 180 seconds, 3 MiB (`setMaxDuration`/`setMaxFileSize`); reaching one stops cleanly and attaches the recording. Under about 1 second is refused as too short. Before hand-off `NativeRecorderPolicy` checks non-zero length, the 4 MiB rule and an `ftyp` MPEG-4 header.
 - Foreground only: no service and no new permission. The screen stays on while recording. `onPause`, audio focus loss or a call stops the recording and keeps the partial file; it is handed to the page when the user returns, or deleted if the page is gone.
-- One microphone user at a time: the recorder refuses to start while a WebView microphone grant or capture is armed or active, and WebView microphone requests and `beginMicrophoneCapture` are denied while it is active.
+- One microphone user at a time: WebView permission requests are unconditionally denied, so the page cannot capture audio. `NativeRecorderPolicy.canStart` refuses a second native recording while the native recorder is active. The former `NativeAudioPermissionPolicy` and WebView mic grant actions are removed.
 - Files are `cache/voice/voice-<n>.m4a`, served read-only by the non-exported `VellumFileProvider`, deleted once the page has read them or on cancel or error, and swept at start, on resume (older than 10 minutes) and on destroy.
 - Page control: `stopRecorder` and `cancelRecorder` (no payload, origin-verified, refused when no recording is active; cancel is also accepted during the permission step). Native reports progress by calling `window.__vellumRecorderStatus('<code>')` with a fixed script for an allow-listed code only.
+
+### Bridge and temporary files
+
+- `VellumNative` via the origin-verified WebView message listener is the only JavaScript/native bridge. The removed `VellumBridge`, page microphone grant actions, `requestCamera` action, and `__vellumFile*` callbacks must not return. WebView permission requests are denied unconditionally.
+- The non-exported `VellumFileProvider` exposes only `cache/open/`, `cache/camera/`, and `cache/voice/`. Open copies are removed at app start, on resume, before a later hand-off, and on destroy. Camera and voice files are fully swept at app start/destroy and stale files are swept on resume; an active or held recording is preserved until delivery or cancellation.
+- Camera and recorder page status uses fixed scripts selected from the allow-listed `NativeCameraPolicy` / `NativeRecorderPolicy` codes, only for the trusted page. No patient data, names, filenames, URIs, or file contents are sent in status scripts.
 
 ### Camera capture
 
@@ -40,13 +46,9 @@ The Android wrapper continues to use the bundled Google ML Kit Latin recognizer 
 
 The extracted fields are patient name, DOB, explicitly stated gender/sex, Australian phone, and email. DOB output is ISO `yyyy-MM-dd`; source text is retained. Phone output preserves the recognized source formatting. Missing fields remain null in the native result. Invalid or conflicting values are not selected; their candidate values and source regions remain available in review. A gender is never inferred from a name or title. The table header, not the OpenNLP model, determines which name/contact belongs to a patient; known clinician columns are excluded.
 
-The OCR API is configured for ML Kit's bundled ("thick client") Latin recognizer: the APK includes its local module descriptor, model assets, and native libraries. OpenNLP and its person model are also packaged locally. The extraction source has no app-level network call that sends OCR text, and exceptions shown to users are generic. These facts establish local processing in the code path, but do not prove that the whole APK is offline or that no third-party code can access patient data:
+The OCR API is configured for ML Kit's bundled ("thick client") Latin recognizer: the APK includes its local module descriptor, model assets, and native libraries. OpenNLP and its person model are also packaged locally. The Android APK build disables the Grok extension and scans packaged web assets for remote scripts, styles, fonts, and modules. The manifest retains `INTERNET` and cleartext traffic for the migration loopback server; no runtime network capture was performed, so this is not a claim that the full app has been dynamically proven offline. Android backup is disabled (`allowBackup="false"`), with `root`, `file`, `database`, `sharedpref`, and `external` excluded by both backup rule files.
 
-- The built WebView `index.html` contains a remotely hosted `https://grok.com/grok-app-builder/extensions.js` script. It executes in the app page context and can access that page's DOM, local storage, and `VellumNative` bridge. Its behavior is not pinned or audited here. No patient-data upload by that script has been demonstrated, but the APK cannot be certified as unable to expose patient data while this script runs.
-- The manifest grants `INTERNET` and sets `usesCleartextTraffic=true`; bundled Google ML Kit dependencies include Firebase component and DataTransport/CCT classes. The OCR path contains no explicit call to send its text or image to these services, but runtime network traffic has not been captured or audited.
-- No airplane-mode run has been performed. The system document picker used for CSV export can expose the chosen output to a user-selected cloud-backed document provider. `android:allowBackup` is not explicitly disabled, so platform backup behavior also needs a product decision.
-
-Accordingly, describe the recognizer and extractor as locally packaged/on-device, not the entire app as proven fully offline. Patient data is not written to diagnostic logs or model-training examples by the inspected extraction path; patient cards are intentionally persisted by the casebook's local store after user confirmation.
+The app's live casebook remains in WebView localStorage and IndexedDB and is not encrypted by the app at rest. The system document picker can let a user choose a cloud-backed destination for an export. Patient data, filenames, URIs, audio, and transcripts must not be written to logs.
 
 ## OpenNLP version and model
 
