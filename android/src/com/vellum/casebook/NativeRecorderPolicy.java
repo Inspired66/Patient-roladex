@@ -93,6 +93,14 @@ final class NativeRecorderPolicy {
     return name != null && name.matches("voice-[0-9]{1,20}\\.m4a");
   }
 
+  // Provider path for a recording: exactly voice/<neutral name>.
+  static boolean isVoiceProviderPath(java.util.List<String> segments) {
+    return segments != null
+        && segments.size() == 2
+        && "voice".equals(segments.get(0))
+        && isNeutralName(segments.get(1));
+  }
+
   // What a stopped recording turns into, given how it ended.
   static String outcomeStatus(String reason, long elapsedMs, boolean stoppedCleanly, boolean fileValid) {
     if ("cancel".equals(reason)) return CANCELLED;

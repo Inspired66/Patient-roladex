@@ -84,6 +84,12 @@ public final class NativeRecorderPolicyTest {
     check(NativeRecorderPolicy.isNeutralName("voice-123456.m4a"), "neutral name");
     check(!NativeRecorderPolicy.isNeutralName("Smith recording.m4a"), "original name refused");
     check(!NativeRecorderPolicy.isNeutralName("../voice-1.m4a"), "path refused");
+    check(NativeRecorderPolicy.isVoiceProviderPath(java.util.Arrays.asList("voice", "voice-42.m4a")), "voice path accepted");
+    check(!NativeRecorderPolicy.isVoiceProviderPath(java.util.Arrays.asList("voice", "..", "voice-42.m4a")), "voice traversal refused");
+    check(!NativeRecorderPolicy.isVoiceProviderPath(java.util.Arrays.asList("voice", "a.m4a")), "voice non-neutral name refused");
+    check(!NativeRecorderPolicy.isVoiceProviderPath(java.util.Arrays.asList("files", "voice-42.m4a")), "other directory refused");
+    check(!NativeRecorderPolicy.isVoiceProviderPath(java.util.Arrays.asList("voice")), "short path refused");
+    check(!NativeRecorderPolicy.isVoiceProviderPath(null), "null path refused");
     check(!NativeRecorderPolicy.isNeutralName(null), "null name refused");
 
     System.out.println("NativeRecorderPolicyTest: " + checks + " checks passed");

@@ -234,6 +234,10 @@ class WebAssetCheckTest(unittest.TestCase):
         self.assertIn("NativeRecorderPolicy.canGrantWebMicrophone(recorderSession.isActive())", grant)
         begin = source.split("private void beginMicrophoneCapture(", 1)[1].split("\n  private ", 1)[0]
         self.assertIn("NativeRecorderPolicy.canGrantWebMicrophone(recorderSession.isActive())", begin)
+        # The provider must resolve voice URIs, or the page reads a recording as empty.
+        resolve = source.split("private File resolve(Uri uri)", 1)[1]
+        self.assertIn("NativeRecorderPolicy.isVoiceProviderPath(segments)", resolve)
+        self.assertIn('"voice"', resolve)
         # Control actions: origin-verified, listed, no payload, fixed error text.
         allowed = source.split("private boolean isActionAllowed(", 1)[1].split("\n  private ", 1)[0]
         for action in ("stopRecorder", "cancelRecorder"):

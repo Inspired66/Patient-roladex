@@ -2938,11 +2938,13 @@ public class MainActivity extends Activity {
       List<String> segments = uri.getPathSegments();
       boolean open = segments.size() == 3 && NativeOpenPolicy.DIR.equals(segments.get(0));
       boolean camera = segments.size() == 2 && "camera".equals(segments.get(0));
-      if (!open && !camera) return null;
+      boolean voice = NativeRecorderPolicy.isVoiceProviderPath(segments);
+      if (!open && !camera && !voice) return null;
       File file = FILES.get(uri.toString());
       if (file == null || getContext() == null) return null;
       try {
-        File root = new File(getContext().getCacheDir(), open ? NativeOpenPolicy.DIR : "camera").getCanonicalFile();
+        String directory = open ? NativeOpenPolicy.DIR : voice ? "voice" : "camera";
+        File root = new File(getContext().getCacheDir(), directory).getCanonicalFile();
         File candidate = file.getCanonicalFile();
         File parent = candidate.getParentFile();
         if (open && parent != null) parent = parent.getParentFile();
