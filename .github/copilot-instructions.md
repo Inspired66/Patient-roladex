@@ -36,7 +36,7 @@ Also read `AGENTS.md` (platform contract) and `docs/architecture-review.md` (sta
 ## Attachments (`NativeAttachmentPolicy`, `src/lib/casebook/files.ts`)
 
 - Allowed types: jpeg, png, webp, gif, heic, heif, bmp, mp3/mpeg, mp4/m4a, aac, wav, ogg, webm, 3gpp, amr audio, pdf, plain text (by MIME, or by extension when MIME is empty or `application/octet-stream`). Keep the native and web lists identical.
-- Limits: 4 MiB per file, 8 files per record, recordings 180 s. Enforce size while reading, not after.
+- Limits: one 30 MB budget per patient across its consults and procedures (`patient-budget.ts`, enforced by `admitFiles` before any blob is written; Not restored rows do not count; restore is never blocked by it). No per-file or file-count cap. Recordings 180 s.
 - Camera captures go to `cacheDir/camera` through the non-exported `VellumFileProvider`; never write patient files to shared storage or MediaStore.
 - The provider exposes only `cache/open/`, `cache/camera/`, and `cache/voice/`. Open hand-off copies are purged at app start, on resume, before a new hand-off, and on destroy. Camera and voice cache sweeps remove all files at app start/destroy and stale files on resume; preserve the active or held recording until delivery/cancel.
 - `NativeOpenPolicy` governs the read-only external-view hand-off; it uses a bounded sequential transfer and a neutral filename. Camera and voice capture details and cleanup stay in `NativeCameraPolicy` / `NativeRecorderPolicy` and their tested native integrations.

@@ -20,8 +20,8 @@ public final class NativeAttachmentPolicyTest {
     check(!NativeAttachmentPolicy.isAllowedSize(0), "empty size rejected");
     check(!NativeAttachmentPolicy.isAllowedSize(NativeAttachmentPolicy.MAX_FILE_BYTES + 1), "oversize rejected");
     check(NativeAttachmentPolicy.isAllowedCount(1), "minimum file count");
-    check(NativeAttachmentPolicy.isAllowedCount(NativeAttachmentPolicy.MAX_FILES), "maximum file count");
-    check(!NativeAttachmentPolicy.isAllowedCount(NativeAttachmentPolicy.MAX_FILES + 1), "too many files rejected");
+    check(NativeAttachmentPolicy.isAllowedCount(NativeAttachmentPolicy.MAX_PICK_ITEMS), "maximum file count");
+    check(!NativeAttachmentPolicy.isAllowedCount(NativeAttachmentPolicy.MAX_PICK_ITEMS + 1), "too many files in one pick rejected");
     System.out.println("NativeAttachmentPolicyTest: 15 checks passed");
   }
 

@@ -97,7 +97,7 @@ public class MainActivity extends Activity {
   private final NativeRestorePickerPolicy.Arm restorePickerArm = new NativeRestorePickerPolicy.Arm();
   private final NativeAttachmentPickerPolicy.Arm attachmentPickerArm =
       new NativeAttachmentPickerPolicy.Arm();
-  private int attachmentPickerMaxItems = NativeAttachmentPolicy.MAX_FILES;
+  private int attachmentPickerMaxItems = NativeAttachmentPolicy.MAX_PICK_ITEMS;
   private String saveName = "vellum.csv";
   private NativeOpenPolicy.Transfer openTransfer;
   private Uri openUri;
@@ -1855,7 +1855,7 @@ public class MainActivity extends Activity {
     long size = contentSize(uri);
     if (!NativeAttachmentPolicy.isAllowedSize(size)) {
       return size > NativeAttachmentPolicy.MAX_FILE_BYTES
-          ? "Attachments must be 4 MB or smaller."
+          ? "Attachments must be 30 MB or smaller."
           : "That attachment is empty or its size could not be verified.";
     }
     return null;
@@ -2042,8 +2042,8 @@ public class MainActivity extends Activity {
           for (Uri uri : selected) {
             if (accepted.size() >= attachmentPickerMaxItems) {
               refusedReasons.add(attachmentPickerMaxItems == 1
-                  ? "You can add only one more attachment."
-                  : "You can add up to " + attachmentPickerMaxItems + " more attachments.");
+                  ? "You can add only one file at a time."
+                  : "You can add up to " + attachmentPickerMaxItems + " files at a time.");
               continue;
             }
             String problem = attachmentError(uri);
@@ -2054,7 +2054,7 @@ public class MainActivity extends Activity {
         String selectionMessage = selected == null
             ? "Choose an attachment to continue."
             : attachmentSelectionMessage(accepted.size(), refusedReasons);
-        attachmentPickerMaxItems = NativeAttachmentPolicy.MAX_FILES;
+        attachmentPickerMaxItems = NativeAttachmentPolicy.MAX_PICK_ITEMS;
         if (selectionMessage != null && accepted.isEmpty()) {
           showAttachmentError(selectionMessage);
           dropCameraOutput();
@@ -2072,7 +2072,7 @@ public class MainActivity extends Activity {
     }
     if (requestCode == CAMERA_REQ) {
       if (upload != null) handleCameraResult(resultCode);
-      attachmentPickerMaxItems = NativeAttachmentPolicy.MAX_FILES;
+      attachmentPickerMaxItems = NativeAttachmentPolicy.MAX_PICK_ITEMS;
     }
     if (requestCode == SAVE_REQ) {
       savePickerOpen = false;

@@ -6,8 +6,11 @@ import java.util.Locale;
 import java.util.Set;
 
 final class NativeAttachmentPolicy {
-  static final long MAX_FILE_BYTES = 4L * 1024L * 1024L;
-  static final int MAX_FILES = 8;
+  // The only attachment limit is the per-patient budget, which the web layer enforces. A single
+  // file can never be larger than that budget, so this is only a sanity ceiling for one file.
+  static final long MAX_FILE_BYTES = 30L * 1024L * 1024L;
+  // Per selection in the chooser, so one pick cannot flood the callback. Not an attachment limit.
+  static final int MAX_PICK_ITEMS = 100;
 
   private static final Set<String> MIME_TYPES = new HashSet<>(Arrays.asList(
       "image/jpeg", "image/png", "image/webp", "image/gif", "image/heic", "image/heif", "image/bmp",
@@ -37,6 +40,6 @@ final class NativeAttachmentPolicy {
   }
 
   static boolean isAllowedCount(int count) {
-    return count > 0 && count <= MAX_FILES;
+    return count > 0 && count <= MAX_PICK_ITEMS;
   }
 }

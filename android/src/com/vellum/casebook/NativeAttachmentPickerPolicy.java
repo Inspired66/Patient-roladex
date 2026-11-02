@@ -2,7 +2,7 @@ package com.vellum.casebook;
 
 final class NativeAttachmentPickerPolicy {
   static final long ARM_LIFETIME_MS = 10_000L;
-  static final int MAX_ITEMS = NativeAttachmentPolicy.MAX_FILES;
+  static final int MAX_ITEMS = NativeAttachmentPolicy.MAX_PICK_ITEMS;
 
   static final String FILES = "files";
   static final String PHOTOS = "photos";

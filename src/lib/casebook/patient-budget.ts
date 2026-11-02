@@ -4,6 +4,8 @@ import type { Patient } from "./types.ts";
 // procedures (the General notes list is a view of those, it holds no files of its own).
 export const PATIENT_BUDGET_BYTES = 30 * 1024 * 1024;
 
+export const PATIENT_BUDGET_LABEL = "30 MB";
+
 export type BudgetResult = "ok" | "over-budget";
 
 function countedSize(size: unknown) {

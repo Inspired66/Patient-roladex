@@ -1,30 +1,21 @@
-import { formatBytes } from "./format.ts";
+import { canAdd, overBudgetMessage, remainingBytes } from "./patient-budget.ts";
+import type { Patient } from "./types.ts";
 
 const DB_NAME = "vellum";
 const STORE = "files";
 const METADATA_STORE = "metadata";
 export const ATTACHMENTS_SCHEMA_VERSION = 2;
 
-export const MAX_FILE_BYTES = 4 * 1024 * 1024;
-export const MAX_FILES = 8;
+// Per selection in the chooser only, mirroring NativeAttachmentPolicy.MAX_PICK_ITEMS. It is not an
+// attachment limit: the only limit is the per-patient budget in patient-budget.ts.
+export const MAX_PICK_ITEMS = 100;
 export const MAX_RECORDING_SECONDS = 180;
 
-export function fileLimitLabel() {
-  return formatBytes(MAX_FILE_BYTES).replace(".0 ", " ");
-}
-
-export function acceptFiles(existing: number, incoming: File[]) {
+// Type and emptiness checks only. The budget is checked by admitFiles.
+export function acceptFiles(incoming: File[]) {
   const accepted: File[] = [];
   const rejected: Array<{ file: File; reason: string }> = [];
   for (const file of incoming) {
-    if (existing + accepted.length >= MAX_FILES) {
-      rejected.push({ file, reason: `Up to ${MAX_FILES} attachments.` });
-      continue;
-    }
-    if (file.size > MAX_FILE_BYTES) {
-      rejected.push({ file, reason: `Each attachment must be ${fileLimitLabel()} or smaller.` });
-      continue;
-    }
     if (file.size <= 0) {
       rejected.push({ file, reason: "That file was empty." });
       continue;
@@ -36,6 +27,25 @@ export function acceptFiles(existing: number, incoming: File[]) {
     accepted.push(file);
   }
   return { accepted, rejected, error: rejected.at(-1)?.reason ?? "" };
+}
+
+// The one shared admission check, run before any blob is written. `pendingSizes` are files already
+// chosen for this patient but not yet saved. If the usable files do not all fit together, none is
+// admitted and each is reported with the same fixed over-budget message (no file names).
+export function admitFiles(
+  patient: Pick<Patient, "surgeries" | "consults"> | undefined,
+  pendingSizes: readonly number[],
+  incoming: File[],
+) {
+  const result = acceptFiles(incoming);
+  if (result.accepted.length === 0) return result;
+  const sizes = [...pendingSizes, ...result.accepted.map((file) => file.size)];
+  if (patient && canAdd(patient, sizes) === "ok") return result;
+  const reason = overBudgetMessage(
+    patient ? Math.max(0, remainingBytes(patient) - pendingSizes.reduce((a, n) => a + n, 0)) : 0,
+  );
+  const rejected = [...result.rejected, ...result.accepted.map((file) => ({ file, reason }))];
+  return { accepted: [] as File[], rejected, error: reason };
 }
 
 const ALLOWED_MIME_TYPES = new Set([
@@ -194,9 +204,14 @@ export function withRestoreInProgress<T>(work: () => Promise<T>): Promise<T> {
   return trackActivity("restore", work);
 }
 
-// Wrap every flow that stores blobs and then saves the record that references them.
+// Wrap every flow that stores blobs and then saves the record that references them. Flows run one
+// at a time, so each budget check sees the records saved by the flow before it.
+let writeQueue: Promise<unknown> = Promise.resolve();
+
 export function withBlobWriteInProgress<T>(work: () => Promise<T>): Promise<T> {
-  return trackActivity("write", work);
+  const run = writeQueue.then(work, work);
+  writeQueue = run.catch(() => undefined);
+  return trackActivity("write", () => run);
 }
 
 // An unreferenced blob is only marked the first time it is seen, and is deleted only once it has

@@ -11,7 +11,7 @@ import {
   recorderWatchdogMs,
   type RecorderState,
 } from "@/lib/casebook/recorder-capture";
-import { MAX_FILES } from "@/lib/casebook/files";
+import { MAX_PICK_ITEMS } from "@/lib/casebook/files";
 import {
   ATTACHMENT_MENU_OPTIONS,
   attachmentMenuLimitState,
@@ -28,7 +28,7 @@ import {
   writeCameraShrink,
 } from "@/lib/casebook/camera-capture";
 
-const FILE_ACCEPT = attachmentPickerConfig("files", MAX_FILES).accept;
+const FILE_ACCEPT = attachmentPickerConfig("files", MAX_PICK_ITEMS).accept;
 
 const menuIcons = {
   files: FileText,
@@ -39,7 +39,7 @@ const menuIcons = {
 
 export function AttachControls({
   disabled,
-  remaining = MAX_FILES,
+  remaining = MAX_PICK_ITEMS,
   onFiles,
 }: {
   disabled?: boolean;

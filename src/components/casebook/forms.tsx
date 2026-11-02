@@ -1,17 +1,16 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AttachControls } from "@/components/casebook/attach";
-import { attachmentSelectionMessage } from "@/lib/casebook/attachment-menu";
+import { attachmentSelectionMessage, pickSlots } from "@/lib/casebook/attachment-menu";
 import {
-  acceptFiles,
+  admitFiles,
   deleteBlob,
-  fileLimitLabel,
-  MAX_FILES,
   MAX_RECORDING_SECONDS,
   putBlob,
   withBlobWriteInProgress,
 } from "@/lib/casebook/files";
 import { choiceNames, displayName, formatBytes, given, joinName, knownHospitals, knownSurgeons, surname, todayISO } from "@/lib/casebook/format";
 import { useBackLayer } from "@/lib/casebook/back";
+import { PATIENT_BUDGET_LABEL, remainingBytes } from "@/lib/casebook/patient-budget";
 import { useCasebook } from "@/lib/casebook/store";
 import type { Attachment, PatientInput, SurgeryInput } from "@/lib/casebook/types";
 
@@ -298,6 +297,11 @@ export function SurgeryForm({
   const [hospital, setHospital] = useState(surgery?.hospital ?? "");
   const [notes, setNotes] = useState(surgery?.notes ?? "");
   const [files, setFiles] = useState<PendingFile[]>([]);
+  const slots = useCasebook((state) => {
+    const patient = state.patients.find((item) => item.id === patientId);
+    const pending = files.reduce((sum, item) => sum + item.file.size, 0);
+    return pickSlots(patient ? remainingBytes(patient) - pending : 0);
+  });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -311,7 +315,12 @@ export function SurgeryForm({
 
   function addFiles(list: FileList | File[] | null) {
     if (!list) return;
-    const { accepted, rejected } = acceptFiles(files.length, Array.from(list));
+    const patient = useCasebook.getState().patients.find((item) => item.id === patientId);
+    const { accepted, rejected } = admitFiles(
+      patient,
+      files.map((pending) => pending.file.size),
+      Array.from(list),
+    );
     setError(attachmentSelectionMessage(accepted.length, rejected.map((item) => item.reason)));
     setFiles((current) => [
       ...current,
@@ -410,11 +419,11 @@ export function SurgeryForm({
                 placeholder="Airway, comorbidities, anaesthetic, recovery"
               />
               <p className="limit-note">
-                Up to {MAX_FILES} files, {fileLimitLabel()} each. Recordings stop at {Math.floor(MAX_RECORDING_SECONDS / 60)}:
+                Up to {PATIENT_BUDGET_LABEL} of attachments per patient. Recordings stop at {Math.floor(MAX_RECORDING_SECONDS / 60)}:
                 {String(MAX_RECORDING_SECONDS % 60).padStart(2, "0")}.
               </p>
             </div>
-            <AttachControls remaining={MAX_FILES - files.length} onFiles={(list) => addFiles(list)} />
+            <AttachControls remaining={slots} onFiles={(list) => addFiles(list)} />
               {files.map((pending) => (
                 <div className="file-row" key={pending.key}>
                   {pending.file.type.startsWith("image/") ? (

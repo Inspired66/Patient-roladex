@@ -7,7 +7,7 @@ import {
   attachmentPickerConfig,
   attachmentSelectionMessage,
 } from "./attachment-menu.ts";
-import { MAX_FILES } from "./files.ts";
+import { MAX_PICK_ITEMS } from "./files.ts";
 
 test("the shared menu has the four requested labels and hints", () => {
   assert.deepEqual(
@@ -30,7 +30,7 @@ test("limit state keeps the add button enabled below the limit and explains the 
   assert.deepEqual(attachmentMenuLimitState(0), {
     limitReached: true,
     disabled: true,
-    disabledReason: "Attachment limit reached. Remove a file before adding another.",
+    disabledReason: "This patient's attachment space is full. Remove a file before adding another.",
   });
   assert.equal(attachmentPickerConfig("photos", 0).payload.maxItems, 1);
 });
@@ -57,17 +57,17 @@ test("Files and Photos request distinct picker purposes with constrained accept 
     purpose: "recorder",
     maxItems: 2,
   });
-  assert.equal(attachmentPickerConfig("files", 100).payload.maxItems, MAX_FILES);
+  assert.equal(attachmentPickerConfig("files", 100).payload.maxItems, MAX_PICK_ITEMS);
 });
 
 test("refusal feedback identifies accepted files and describes each refusal reason", () => {
   assert.equal(
     attachmentSelectionMessage(2, [
-      "Each attachment must be 4 MB or smaller.",
+      "That file was empty.",
       "Choose an image, audio recording, PDF, or plain-text file.",
-      "You can add up to 8 attachments.",
+      "Not enough space for these files.",
     ]),
-    "Added 2 files. 3 files were not added. Each attachment must be 4 MB or smaller. Choose an image, audio recording, PDF, or plain-text file. You can add up to 8 attachments. Accepted files are shown below.",
+    "Added 2 files. 3 files were not added. That file was empty. Choose an image, audio recording, PDF, or plain-text file. Not enough space for these files. Accepted files are shown below.",
   );
   assert.equal(
     attachmentSelectionMessage(0, ["That file was empty."]),

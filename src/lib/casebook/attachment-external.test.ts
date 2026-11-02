@@ -26,7 +26,7 @@ import {
   requestExternalNotice,
   resetExternalNotice,
 } from "./external-notice.ts";
-import { MAX_FILE_BYTES } from "./files.ts";
+import { PATIENT_BUDGET_BYTES as MAX_FILE_BYTES } from "./patient-budget.ts";
 
 type Call = { action: string; payload: Record<string, unknown> | undefined };
 

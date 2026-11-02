@@ -33,9 +33,9 @@ export const CAMERA_MESSAGES: Record<CameraStatus, string> = {
   failed: "The photo could not be prepared. Try again, or choose Photos instead.",
   empty: "The camera did not return a photo. Try again.",
   "too-large":
-    "The photo is still larger than 4 MB after shrinking. Try again, or choose Photos instead.",
+    "The photo is still larger than 30 MB after shrinking. Try again, or choose Photos instead.",
   "too-large-original":
-    "That photo is larger than 4 MB. Turn on “Shrink camera photos” to add it.",
+    "That photo is larger than 30 MB. Turn on “Shrink camera photos” to add it.",
   fallback: "The photo could not be shrunk, so the original was added with its GPS location tags removed.",
   reencoded:
     "GPS location tags could not be removed from the original, so the photo was shrunk and cleaned instead.",

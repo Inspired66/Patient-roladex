@@ -185,10 +185,6 @@ test("failure paths leave existing data and files untouched", async () => {
   index[0] = { ...index[0], ownerId: "no-such-record" };
   await assert.rejects(restoreDrafts(drafts, commit, target, index), /does not match/);
 
-  // Too many entries for one record.
-  const many = Array.from({ length: 9 }, (_, i) => ({ ...index[1], id: `x-${i}`, ownerId: "s-1" }));
-  await assert.rejects(restoreDrafts(drafts, commit, target, many), /does not match/);
-
   assert.equal(committed, false);
   assert.deepEqual([...target.files.keys()], ["keep"]);
 });
@@ -286,4 +282,24 @@ test("referencedFileIds includes Not restored attachments so their ids are never
   let restored: Patient[] = [];
   await restoreData(await dataBackup([patient()], source()), memoryStore(), (p) => (restored = p));
   assert.deepEqual([...referencedFileIds(restored)].sort(), ["f-1", "f-2", "f-3"]);
+});
+
+test("restore is not limited by file count or the patient budget", async () => {
+  const p = patient();
+  const csv = await patientsToCsv([p], [], source(), { includeFiles: false });
+  const { drafts } = csvToDrafts(csv);
+  const base = (await buildAttachmentIndex([p], source()))[1];
+  const many = Array.from({ length: 12 }, (_, i) => ({
+    ...base,
+    id: `x-${i}`,
+    ownerId: "s-1",
+    size: 5 * 1024 * 1024,
+  }));
+  let restored: Patient[] = [];
+  await restoreDrafts(drafts, (patients) => (restored = patients), memoryStore(), many);
+  const added = restored
+    .flatMap((item) => item.surgeries.flatMap((s) => s.attachments))
+    .filter((f) => f.id.startsWith("x-"));
+  assert.equal(added.length, 12);
+  assert.ok(added.every((file) => file.notRestored));
 });

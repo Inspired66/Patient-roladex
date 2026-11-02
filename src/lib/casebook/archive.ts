@@ -2,14 +2,13 @@ import {
   deleteBlob,
   getBlob,
   isSupportedAttachmentMetadata,
-  MAX_FILE_BYTES,
-  MAX_FILES,
   putBlob,
   withRestoreInProgress,
 } from "./files.ts";
 import { isValidTimestamp } from "./detail-data.ts";
 import { callNative, hasNativeMessageBridge } from "./native-bridge.ts";
 import { given, joinName, surname } from "./format.ts";
+import { PATIENT_BUDGET_BYTES } from "./patient-budget.ts";
 import type { Attachment, Consult, Contact, Patient, Surgery } from "./types.ts";
 
 const COLUMNS = [
@@ -36,6 +35,9 @@ const MAGIC = "VELLUM1";
 const DATA_MAGIC = "VELLUMD1";
 const DATA_FORMAT_VERSION = 1;
 const MAX_INDEX_ENTRIES = 20_000;
+// A single file can never exceed the per-patient budget. This is a sanity ceiling for one packed
+// file, not an extra limit; there is no per-file or per-item count cap.
+const MAX_PACKED_FILE_BYTES = PATIENT_BUDGET_BYTES;
 const MAX_INDEXED_FILE_BYTES = 31 * 1024 * 1024;
 const GCM_TAG_BYTES = 16;
 const PBKDF2_ITERS = 120_000;
@@ -158,7 +160,7 @@ async function packFiles(files: Attachment[], fileStore: ArchiveFileStore): Prom
     if (!blob) throw new Error(`Attachment "${file.name}" is missing from local storage.`);
     if (
       blob.size <= 0 ||
-      blob.size > MAX_FILE_BYTES ||
+      blob.size > MAX_PACKED_FILE_BYTES ||
       blob.size !== file.size ||
       !isSupportedAttachmentMetadata(file.name, file.mime)
     ) {
@@ -184,7 +186,7 @@ function unpackFiles(raw: string): PackedFile[] {
   } catch {
     throw new Error("Could not read attachments in that file.");
   }
-  if (!Array.isArray(parsed) || parsed.length > MAX_FILES) {
+  if (!Array.isArray(parsed) || parsed.length > MAX_INDEX_ENTRIES) {
     throw new Error("The archive has an invalid number of attachments.");
   }
   return parsed.map((item) => {
@@ -198,10 +200,10 @@ function unpackFiles(raw: string): PackedFile[] {
       typeof file.size !== "number" ||
       !Number.isInteger(file.size) ||
       file.size <= 0 ||
-      file.size > MAX_FILE_BYTES ||
+      file.size > MAX_PACKED_FILE_BYTES ||
       typeof file.data !== "string" ||
       file.data.length === 0 ||
-      file.data.length > Math.ceil(MAX_FILE_BYTES / 3) * 4 ||
+      file.data.length > Math.ceil(MAX_PACKED_FILE_BYTES / 3) * 4 ||
       file.data.length % 4 !== 0 ||
       !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(file.data) ||
       !isSupportedAttachmentMetadata(file.name, file.mime)
@@ -390,15 +392,13 @@ export function csvToDrafts(csv: string): { drafts: DraftPatient[]; contacts: Co
 }
 
 async function storePacked(files: PackedFile[], written: string[], fileStore: ArchiveFileStore) {
-  if (files.length > MAX_FILES)
-    throw new Error(`An item cannot have more than ${MAX_FILES} attachments.`);
   const attachments: Attachment[] = [];
   for (const file of files) {
     const bytes = base64ToBytes(file.data);
     if (
       bytes.byteLength !== file.size ||
       bytes.byteLength <= 0 ||
-      bytes.byteLength > MAX_FILE_BYTES ||
+      bytes.byteLength > MAX_PACKED_FILE_BYTES ||
       !isSupportedAttachmentMetadata(file.name, file.mime)
     ) {
       throw new Error(`Attachment "${file.name}" is invalid or exceeds the supported file limits.`);
@@ -526,7 +526,7 @@ export function applyAttachmentIndex(patients: Patient[], index: AttachmentIndex
   }
   for (const entry of index) {
     const list = owners.get(`${entry.patientId}|${entry.ownerKind}|${entry.ownerId}`);
-    if (!list || list.length >= MAX_FILES) throw bad();
+    if (!list) throw bad();
     list.push({
       id: entry.id,
       name: entry.name,

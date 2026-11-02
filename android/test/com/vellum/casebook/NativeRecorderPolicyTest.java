@@ -6,7 +6,7 @@ public final class NativeRecorderPolicyTest {
   public static void main(String[] args) {
     // Limits.
     check(NativeRecorderPolicy.MAX_DURATION_MS == 180_000L, "180 s limit");
-    check(NativeRecorderPolicy.MAX_FILE_BYTES < NativeAttachmentPolicy.MAX_FILE_BYTES, "size cap under the 4 MiB rule");
+    check(NativeRecorderPolicy.MAX_FILE_BYTES < NativeRecorderPolicy.MAX_VALID_BYTES, "stop cap under the valid-size ceiling");
     long worstCaseBytes = NativeRecorderPolicy.BIT_RATE / 8L * 180L * 2L;
     check(worstCaseBytes < NativeRecorderPolicy.MAX_FILE_BYTES, "180 s at twice the bit rate still fits");
     check(NativeRecorderPolicy.isTooShort(0) && NativeRecorderPolicy.isTooShort(999), "under 1 s is too short");
@@ -17,8 +17,8 @@ public final class NativeRecorderPolicyTest {
     check(NativeRecorderPolicy.isValidRecording(50_000, mp4), "valid mp4");
     check(!NativeRecorderPolicy.isValidRecording(0, mp4), "empty refused");
     check(!NativeRecorderPolicy.isValidRecording(-1, mp4), "unknown length refused");
-    check(!NativeRecorderPolicy.isValidRecording(NativeAttachmentPolicy.MAX_FILE_BYTES + 1, mp4), "oversize refused");
-    check(NativeRecorderPolicy.isValidRecording(NativeAttachmentPolicy.MAX_FILE_BYTES, mp4), "exactly 4 MiB fits");
+    check(!NativeRecorderPolicy.isValidRecording(NativeRecorderPolicy.MAX_VALID_BYTES + 1, mp4), "oversize refused");
+    check(NativeRecorderPolicy.isValidRecording(NativeRecorderPolicy.MAX_VALID_BYTES, mp4), "exactly 4 MiB fits");
     check(!NativeRecorderPolicy.isValidRecording(50_000, new byte[] {0, 0, 0, 32, 'R', 'I', 'F', 'F'}), "wrong header refused");
     check(!NativeRecorderPolicy.isValidRecording(50_000, new byte[] {0, 0, 0, 32, 'f', 't', 'y'}), "short header refused");
     check(!NativeRecorderPolicy.isValidRecording(50_000, null), "missing header refused");

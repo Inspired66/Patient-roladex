@@ -1,4 +1,4 @@
-import { MAX_FILES } from "./files.ts";
+import { MAX_PICK_ITEMS } from "./files.ts";
 
 export type AttachmentPickerPurpose = "files" | "photos" | "camera" | "recorder";
 
@@ -17,7 +17,7 @@ export function attachmentPickerConfig(
   maxItems: number,
   options: { shrink?: boolean } = {},
 ) {
-  const count = Math.max(1, Math.min(MAX_FILES, Math.floor(maxItems)));
+  const count = Math.max(1, Math.min(MAX_PICK_ITEMS, Math.floor(maxItems)));
   // Only the camera may carry the shrink flag; native refuses it for any other purpose.
   const payload =
     purpose === "camera" && typeof options.shrink === "boolean"
@@ -43,7 +43,7 @@ export function attachmentMenuLimitState(remaining: number) {
   return {
     limitReached,
     disabled: limitReached,
-    disabledReason: limitReached ? "Attachment limit reached. Remove a file before adding another." : "",
+    disabledReason: limitReached ? "This patient's attachment space is full. Remove a file before adding another." : "",
   };
 }
 
@@ -54,4 +54,9 @@ export function attachmentSelectionMessage(acceptedCount: number, rejectedReason
   const details = uniqueReasons.join(" ");
   const accepted = acceptedCount > 0 ? " Accepted files are shown below." : "";
   return `${acceptedCount > 0 ? `Added ${acceptedCount} ${acceptedCount === 1 ? "file" : "files"}. ` : ""}${count} ${count === 1 ? "file was" : "files were"} not added. ${details}${accepted}`;
+}
+
+// Slots offered to the chooser: any positive remaining space allows a normal selection, none blocks it.
+export function pickSlots(remainingBytes: number) {
+  return remainingBytes > 0 ? MAX_PICK_ITEMS : 0;
 }

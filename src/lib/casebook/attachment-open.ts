@@ -1,4 +1,5 @@
-import { getBlob, MAX_FILE_BYTES } from "./files.ts";
+import { getBlob } from "./files.ts";
+import { PATIENT_BUDGET_BYTES } from "./patient-budget.ts";
 import { callNative, hasNativeMessageBridge } from "./native-bridge.ts";
 import { audioBlobForAttachment, isWebViewUnplayableAudio } from "./audio-format.ts";
 import {
@@ -221,7 +222,7 @@ export async function openExternally(
     const blob = await deps.getBlob(file.id);
     if (!blob) return { outcome: "unavailable", message: MISSING_FILE_MESSAGE };
     if (blob.size === 0) return { outcome: "refused", message: EMPTY_TEXT_MESSAGE };
-    if (blob.size > MAX_FILE_BYTES) return { outcome: "refused", message: REFUSED_MESSAGE };
+    if (blob.size > PATIENT_BUDGET_BYTES) return { outcome: "refused", message: REFUSED_MESSAGE };
     if (!deps.noticeAccepted()) {
       if (!(await deps.askNotice())) return { outcome: "refused", message: NOT_OPENED_MESSAGE };
       deps.rememberNotice();

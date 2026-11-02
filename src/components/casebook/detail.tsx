@@ -1,16 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { AttachControls } from "@/components/casebook/attach";
-import { attachmentSelectionMessage } from "@/lib/casebook/attachment-menu";
+import { attachmentSelectionMessage, pickSlots } from "@/lib/casebook/attachment-menu";
 import { ExternalOpenNotice } from "@/components/casebook/external-notice";
 import { AttachmentRow } from "@/components/casebook/attachment-row";
 import { AttachmentCount } from "@/components/casebook/attachment-count";
 import { Confirm } from "@/components/casebook/forms";
 import {
-  acceptFiles,
   deleteBlob,
-  fileLimitLabel,
-  MAX_FILES,
+  admitFiles,
   MAX_RECORDING_SECONDS,
   putBlob,
   withBlobWriteInProgress,
@@ -22,6 +20,7 @@ import {
   patientAttachmentList,
 } from "@/lib/casebook/detail-data";
 import { useBackLayer } from "@/lib/casebook/back";
+import { PATIENT_BUDGET_LABEL, remainingBytes } from "@/lib/casebook/patient-budget";
 import { useCasebook } from "@/lib/casebook/store";
 import type { Attachment, Consult, ContactKind, FlyOrigin, Patient, Surgery } from "@/lib/casebook/types";
 
@@ -48,14 +47,22 @@ function place(el: HTMLElement, box: { top: number; left: number; width: number;
   el.style.transform = `rotateY(${rotY}deg) rotateX(${rotX}deg)`;
 }
 
+function usePickSlots(patientId: string) {
+  return useCasebook((state) => {
+    const patient = state.patients.find((item) => item.id === patientId);
+    return pickSlots(patient ? remainingBytes(patient) : 0);
+  });
+}
+
 function limitCopy() {
   const minutes = Math.floor(MAX_RECORDING_SECONDS / 60);
   const seconds = String(MAX_RECORDING_SECONDS % 60).padStart(2, "0");
-  return `Up to ${MAX_FILES} files, ${fileLimitLabel()} each. Recordings stop at ${minutes}:${seconds}.`;
+  return `Up to ${PATIENT_BUDGET_LABEL} of attachments per patient. Recordings stop at ${minutes}:${seconds}.`;
 }
 
-async function storeIncoming(existing: Attachment[], incoming: File[]) {
-  const { accepted, rejected } = acceptFiles(existing.length, incoming);
+async function storeIncoming(patientId: string, existing: Attachment[], incoming: File[]) {
+  const patient = useCasebook.getState().patients.find((item) => item.id === patientId);
+  const { accepted, rejected } = admitFiles(patient, [], incoming);
   const error = attachmentSelectionMessage(accepted.length, rejected.map((item) => item.reason));
   const stored: Attachment[] = [];
   try {
@@ -551,6 +558,7 @@ function ConsultBlock({
   onOpenContact: (kind: ContactKind, name: string) => void;
 }) {
   const updateConsult = useCasebook((state) => state.updateConsult);
+  const slots = usePickSlots(patientId);
   const removeConsult = useCasebook((state) => state.removeConsult);
   const [draft, setDraft] = useState(consult.notes);
   const [error, setError] = useState("");
@@ -570,8 +578,11 @@ function ConsultBlock({
 
   function add(list: File[]) {
     return withBlobWriteInProgress(async () => {
-      const result = await storeIncoming(consult.attachments, list);
-      if (result.attachments !== consult.attachments) {
+      const current =
+        useCasebook.getState().patients.find((item) => item.id === patientId)
+          ?.consults.find((item) => item.id === consult.id)?.attachments ?? consult.attachments;
+      const result = await storeIncoming(patientId, current, list);
+      if (result.attachments !== current) {
         updateConsult(patientId, consult.id, { attachments: result.attachments });
       }
       setError(result.error);
@@ -632,7 +643,7 @@ function ConsultBlock({
             placeholder="Consult note"
           />
           <p className="limit-note">{limitCopy()}</p>
-          <AttachControls remaining={MAX_FILES - consult.attachments.length} onFiles={(list) => void add(list)} />
+          <AttachControls remaining={slots} onFiles={(list) => void add(list)} />
           <FileList
             files={consult.attachments}
             onRemove={(id) =>
@@ -669,6 +680,7 @@ function SurgeryBlock({
   onOpenContact: (kind: ContactKind, name: string) => void;
 }) {
   const updateSurgery = useCasebook((state) => state.updateSurgery);
+  const slots = usePickSlots(patientId);
   const removeSurgery = useCasebook((state) => state.removeSurgery);
   const [draft, setDraft] = useState(surgery.notes);
   const [error, setError] = useState("");
@@ -690,8 +702,11 @@ function SurgeryBlock({
 
   function add(list: File[]) {
     return withBlobWriteInProgress(async () => {
-      const result = await storeIncoming(surgery.attachments, list);
-      if (result.attachments !== surgery.attachments) {
+      const current =
+        useCasebook.getState().patients.find((item) => item.id === patientId)
+          ?.surgeries.find((item) => item.id === surgery.id)?.attachments ?? surgery.attachments;
+      const result = await storeIncoming(patientId, current, list);
+      if (result.attachments !== current) {
         updateSurgery(patientId, surgery.id, { attachments: result.attachments });
       }
       setError(result.error);
@@ -752,7 +767,7 @@ function SurgeryBlock({
             placeholder="Type the anaesthetic note"
           />
           <p className="limit-note">{limitCopy()}</p>
-          <AttachControls remaining={MAX_FILES - surgery.attachments.length} onFiles={(list) => void add(list)} />
+          <AttachControls remaining={slots} onFiles={(list) => void add(list)} />
           <FileList
             files={surgery.attachments}
             onRemove={(id) =>

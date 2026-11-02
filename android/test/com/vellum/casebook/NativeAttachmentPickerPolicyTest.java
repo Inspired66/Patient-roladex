@@ -38,7 +38,7 @@ public final class NativeAttachmentPickerPolicyTest {
         "empty max items refused");
     check(
         !NativeAttachmentPickerPolicy.isValidRequest(
-            "https", "appassets.androidplatform.net", 443, "files", 9),
+            "https", "appassets.androidplatform.net", 443, "files", 101),
         "oversized max items refused");
 
     NativeAttachmentPickerPolicy.Arm arm = new NativeAttachmentPickerPolicy.Arm();

@@ -38,8 +38,8 @@ public final class NativeCameraPolicyTest {
     check(NativeCameraPolicy.nextQuality(50) == -1, "unknown quality -> refuse");
 
     // The 4 MiB attachment rule is reused, not redefined.
-    check(NativeCameraPolicy.fitsAttachmentLimit(4L * 1024L * 1024L), "4 MiB fits");
-    check(!NativeCameraPolicy.fitsAttachmentLimit(4L * 1024L * 1024L + 1L), "over 4 MiB refused");
+    check(NativeCameraPolicy.fitsAttachmentLimit(30L * 1024L * 1024L), "30 MiB fits");
+    check(!NativeCameraPolicy.fitsAttachmentLimit(30L * 1024L * 1024L + 1L), "over 30 MiB refused");
     check(!NativeCameraPolicy.fitsAttachmentLimit(0), "zero bytes never fits");
     check(!NativeCameraPolicy.fitsAttachmentLimit(-1), "unknown size never fits");
 

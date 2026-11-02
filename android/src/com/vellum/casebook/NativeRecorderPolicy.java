@@ -9,8 +9,10 @@ import java.util.Map;
 final class NativeRecorderPolicy {
   static final long MAX_DURATION_MS = 180_000L;
   static final long MIN_DURATION_MS = 1_000L;
-  // Well under the 4 MiB attachment rule; 64 kbps for 180 s is about 1.4 MB.
+  // Backstop for the recorder; 64 kbps for 180 s is about 1.4 MB.
   static final long MAX_FILE_BYTES = 3L * 1024L * 1024L;
+  // Largest recording accepted as valid. Unchanged from before the per-patient budget.
+  static final long MAX_VALID_BYTES = 4L * 1024L * 1024L;
   static final int SAMPLE_RATE = 44_100;
   static final int BIT_RATE = 64_000;
   static final int CHANNELS = 1;
@@ -79,7 +81,7 @@ final class NativeRecorderPolicy {
 
   // Non-empty, within the size rule, and an MPEG-4 header: bytes 4 to 8 spell "ftyp".
   static boolean isValidRecording(long length, byte[] header) {
-    if (length <= 0 || length > NativeAttachmentPolicy.MAX_FILE_BYTES) return false;
+    if (length <= 0 || length > MAX_VALID_BYTES) return false;
     if (header == null || header.length < 8) return false;
     return header[4] == 'f' && header[5] == 't' && header[6] == 'y' && header[7] == 'p';
   }

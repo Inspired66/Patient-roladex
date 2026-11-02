@@ -69,7 +69,7 @@ test("messages say what to do and never name a file", () => {
     "Camera permission is off. Turn it on in the phone's Settings for Vellum, or choose Photos instead.",
   );
   assert.match(CAMERA_MESSAGES.denied, /Photos instead/);
-  assert.match(CAMERA_MESSAGES["too-large"], /4 MB/);
+  assert.match(CAMERA_MESSAGES["too-large"], /30 MB/);
   assert.match(CAMERA_MESSAGES["too-large-original"], /Shrink camera photos/);
   assert.match(CAMERA_MESSAGES.fallback, /GPS location tags removed/);
   assert.match(CAMERA_MESSAGES.reencoded, /GPS location tags/);
