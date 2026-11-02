@@ -10,7 +10,7 @@ export const ATTACHMENT_MENU_OPTIONS = [
 ] as const;
 
 const FILE_ACCEPT =
-  "image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,image/bmp,audio/mpeg,audio/mp4,audio/aac,audio/wav,audio/x-wav,audio/ogg,audio/webm,audio/3gpp,audio/amr,application/pdf,text/plain,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif,.bmp,.mp3,.m4a,.aac,.wav,.ogg,.webm,.3gp,.amr,.pdf,.txt";
+  "image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,image/bmp,image/x-ms-bmp,image/x-bmp,image/x-windows-bmp,audio/mpeg,audio/mp4,audio/aac,audio/wav,audio/x-wav,audio/ogg,audio/webm,audio/3gpp,audio/amr,application/pdf,text/plain,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif,.bmp,.mp3,.m4a,.aac,.wav,.ogg,.webm,.3gp,.amr,.pdf,.txt";
 
 export function attachmentPickerConfig(
   purpose: AttachmentPickerPurpose,

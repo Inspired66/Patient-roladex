@@ -48,7 +48,7 @@ export function admitFiles(
   return { accepted: [] as File[], rejected, error: reason };
 }
 
-const ALLOWED_MIME_TYPES = new Set([
+export const ALLOWED_MIME_TYPES = new Set([
   "image/jpeg",
   "image/png",
   "image/webp",
@@ -56,6 +56,9 @@ const ALLOWED_MIME_TYPES = new Set([
   "image/heic",
   "image/heif",
   "image/bmp",
+  "image/x-ms-bmp",
+  "image/x-bmp",
+  "image/x-windows-bmp",
   "audio/mpeg",
   "audio/mp4",
   "audio/x-m4a",
@@ -71,7 +74,7 @@ const ALLOWED_MIME_TYPES = new Set([
   "application/pdf",
   "text/plain",
 ]);
-const ALLOWED_EXTENSIONS = new Set([
+export const ALLOWED_EXTENSIONS = new Set([
   "jpg",
   "jpeg",
   "png",
@@ -92,9 +95,35 @@ const ALLOWED_EXTENSIONS = new Set([
   "txt",
 ]);
 
+const BMP_ALIASES = new Set(["image/x-ms-bmp", "image/x-bmp", "image/x-windows-bmp"]);
+
+function baseType(type: string) {
+  return type.split(";", 1)[0].trim().toLowerCase();
+}
+
+// A .bmp name wins over a wrong image type; SVG stays refused.
+function isWrongImageForBmp(name: string, mime: string) {
+  return (
+    name.toLowerCase().endsWith(".bmp") &&
+    mime.startsWith("image/") &&
+    mime !== "image/svg+xml" &&
+    !ALLOWED_MIME_TYPES.has(mime)
+  );
+}
+
+// The MIME type to store: BMP aliases, untyped or wrongly typed .bmp files become image/bmp.
+export function storedAttachmentMime(name: string, type: string) {
+  const mime = baseType(type);
+  const untyped = !mime || mime === "application/octet-stream";
+  if (BMP_ALIASES.has(mime) || isWrongImageForBmp(name, mime)) return "image/bmp";
+  if (untyped && name.toLowerCase().endsWith(".bmp")) return "image/bmp";
+  return type || "application/octet-stream";
+}
+
 export function isSupportedAttachmentMetadata(name: string, type: string) {
-  const mime = type.split(";", 1)[0].trim().toLowerCase();
+  const mime = baseType(type);
   if (ALLOWED_MIME_TYPES.has(mime)) return true;
+  if (isWrongImageForBmp(name, mime)) return true;
   if (mime && mime !== "application/octet-stream") return false;
   const extension = name.toLowerCase().split(".").at(-1);
   return Boolean(extension && ALLOWED_EXTENSIONS.has(extension));

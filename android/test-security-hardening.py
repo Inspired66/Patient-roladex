@@ -156,6 +156,10 @@ class WebAssetCheckTest(unittest.TestCase):
         self.assertIn("Intent.ACTION_OPEN_DOCUMENT", source)
         self.assertIn("Intent.EXTRA_MIME_TYPES", source)
         self.assertIn("MediaStore.ACTION_PICK_IMAGES", source)
+        files_case = source.split("case NativeAttachmentPickerPolicy.FILES:", 1)[1].split("case NativeAttachmentPickerPolicy.PHOTOS:", 1)[0]
+        for alias in ("image/bmp", "image/x-ms-bmp", "image/x-bmp", "image/x-windows-bmp"):
+            self.assertIn(f'"{alias}"', files_case)
+        self.assertNotIn("application/octet-stream", files_case)
         self.assertIn('intent.setType("image/*")', source)
         self.assertNotIn("RECORD_SOUND_ACTION", source)
         self.assertIn("NativeAttachmentPolicy.isAllowedType(mime, name)", source)

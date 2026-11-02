@@ -7,6 +7,7 @@ import {
   deleteBlob,
   MAX_RECORDING_SECONDS,
   putBlob,
+  storedAttachmentMime,
   withBlobWriteInProgress,
 } from "@/lib/casebook/files";
 import { choiceNames, displayName, formatBytes, given, joinName, knownHospitals, knownSurgeons, surname, todayISO } from "@/lib/casebook/format";
@@ -356,7 +357,7 @@ export function SurgeryForm({
           attachments.push({
             id,
             name: pending.file.name,
-            mime: pending.file.type || "application/octet-stream",
+            mime: storedAttachmentMime(pending.file.name, pending.file.type),
             size: pending.file.size,
             addedAt: new Date().toISOString(),
           });

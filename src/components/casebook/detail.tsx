@@ -11,6 +11,7 @@ import {
   admitFiles,
   MAX_RECORDING_SECONDS,
   putBlob,
+  storedAttachmentMime,
   withBlobWriteInProgress,
 } from "@/lib/casebook/files";
 import { ageLabel, displayName, formatDob, patientTimeline, todayISO } from "@/lib/casebook/format";
@@ -73,7 +74,7 @@ async function storeIncoming(patientId: string, existing: Attachment[], incoming
       stored.push({
         id,
         name: file.name,
-        mime: file.type || "application/octet-stream",
+        mime: storedAttachmentMime(file.name, file.type),
         size: file.size,
         addedAt: new Date().toISOString(),
       });

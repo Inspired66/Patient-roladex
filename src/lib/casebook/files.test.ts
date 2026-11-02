@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { acceptFiles, admitFiles } from "./files.ts";
+import { readFileSync } from "node:fs";
+import {
+  acceptFiles,
+  admitFiles,
+  ALLOWED_EXTENSIONS,
+  ALLOWED_MIME_TYPES,
+  isSupportedAttachmentMetadata,
+  storedAttachmentMime,
+} from "./files.ts";
+import { attachmentPickerConfig } from "./attachment-menu.ts";
 import { PATIENT_BUDGET_BYTES, remainingBytes } from "./patient-budget.ts";
 import type { Attachment, Patient } from "./types.ts";
 
@@ -160,4 +169,49 @@ test("a restored patient already over budget refuses every add until space is fr
 test("a patient with zero attachments, and a missing patient", () => {
   assert.equal(admitFiles(patientWith(0), [], [file("a.txt", "text/plain")]).accepted.length, 1);
   assert.equal(admitFiles(undefined, [], [file("a.txt", "text/plain")]).accepted.length, 0);
+});
+
+const BMP_ALIASES = ["image/x-ms-bmp", "image/x-bmp", "image/x-windows-bmp"];
+
+test("every BMP alias is accepted and stored as image/bmp", () => {
+  for (const alias of ["image/bmp", ...BMP_ALIASES]) {
+    assert.equal(isSupportedAttachmentMetadata("scan.bmp", alias), true, alias);
+    assert.equal(isSupportedAttachmentMetadata("scan", alias), true, alias);
+    assert.equal(storedAttachmentMime("scan.bmp", alias), "image/bmp", alias);
+  }
+});
+
+test("an empty or octet-stream .bmp is accepted and stored as image/bmp", () => {
+  for (const type of ["", "application/octet-stream"]) {
+    assert.equal(isSupportedAttachmentMetadata("scan.BMP", type), true);
+    assert.equal(storedAttachmentMime("scan.BMP", type), "image/bmp");
+  }
+  assert.equal(isSupportedAttachmentMetadata("scan", ""), false);
+});
+
+test("a .bmp with a wrong image type is classified by extension; SVG stays refused", () => {
+  assert.equal(isSupportedAttachmentMetadata("scan.bmp", "image/bitmap"), true);
+  assert.equal(storedAttachmentMime("scan.bmp", "image/bitmap"), "image/bmp");
+  assert.equal(isSupportedAttachmentMetadata("scan.bmp", "image/svg+xml"), false);
+  assert.equal(isSupportedAttachmentMetadata("scan.svg", "image/svg+xml"), false);
+  assert.equal(isSupportedAttachmentMetadata("scan.png", "image/bitmap"), false);
+});
+
+test("a non-BMP file named .bmp keeps the existing rules", () => {
+  assert.equal(isSupportedAttachmentMetadata("x.bmp", "text/html"), false);
+  assert.equal(isSupportedAttachmentMetadata("x.bmp", "application/javascript"), false);
+  assert.equal(storedAttachmentMime("x.bmp", "application/pdf"), "application/pdf");
+  assert.equal(storedAttachmentMime("x.png", "image/png"), "image/png");
+  assert.equal(storedAttachmentMime("x.pdf", ""), "application/octet-stream");
+});
+
+test("the web and Java attachment lists match and the pickers offer the BMP aliases", () => {
+  const java = readFileSync(new URL("../../../android/src/com/vellum/casebook/NativeAttachmentPolicy.java", import.meta.url), "utf8");
+  const listOf = (name: string) =>
+    [...java.split(name)[1].split("));")[0].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual([...ALLOWED_MIME_TYPES].sort(), listOf("MIME_TYPES =").sort());
+  assert.deepEqual([...ALLOWED_EXTENSIONS].sort(), listOf("EXTENSIONS =").sort());
+  const accept = attachmentPickerConfig("files", 1).accept.split(",");
+  for (const alias of BMP_ALIASES) assert.ok(accept.includes(alias), alias);
+  assert.equal(attachmentPickerConfig("files", 1).accept.includes("application/octet-stream"), false);
 });
