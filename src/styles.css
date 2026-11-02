@@ -821,6 +821,44 @@ a.card-contact span {
   color: var(--color-ink-muted);
   font-size: 0.75rem;
 }
+.budget-meter {
+  margin: 0.6rem 0 0;
+  color: var(--color-ink-muted);
+  font-size: 0.75rem;
+}
+.budget-meter-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
+}
+.budget-meter-title {
+  font-weight: 600;
+  color: var(--color-ink);
+}
+.budget-meter-bar {
+  height: 6px;
+  margin-top: 0.3rem;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--color-line);
+}
+.budget-meter-bar > span {
+  display: block;
+  height: 100%;
+  background: var(--color-ink);
+}
+.budget-meter[data-state="full"] .budget-meter-bar > span {
+  background: var(--color-danger);
+}
+.budget-meter-status {
+  margin: 0.25rem 0 0;
+  font-weight: 600;
+  color: var(--color-ink);
+}
+.budget-meter-note {
+  margin: 0.2rem 0 0;
+}
 .name-link {
   display: inline;
   margin: 0;

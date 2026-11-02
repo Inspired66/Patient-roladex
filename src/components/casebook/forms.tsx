@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AttachControls } from "@/components/casebook/attach";
+import { BudgetMeter } from "@/components/casebook/budget-meter";
 import { attachmentSelectionMessage, pickSlots } from "@/lib/casebook/attachment-menu";
 import {
   admitFiles,
@@ -422,6 +423,7 @@ export function SurgeryForm({
                 Up to {PATIENT_BUDGET_LABEL} of attachments per patient. Recordings stop at {Math.floor(MAX_RECORDING_SECONDS / 60)}:
                 {String(MAX_RECORDING_SECONDS % 60).padStart(2, "0")}.
               </p>
+              <BudgetMeter patientId={patientId} pendingBytes={files.reduce((sum, item) => sum + item.file.size, 0)} />
             </div>
             <AttachControls remaining={slots} onFiles={(list) => addFiles(list)} />
               {files.map((pending) => (

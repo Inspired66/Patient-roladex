@@ -111,3 +111,5 @@ The manifest declares `CAMERA`, `INTERNET`, and `RECORD_AUDIO`. Camera and micro
 - `android/build-apk.sh` is a custom direct SDK build, not a Gradle/CI release pipeline. A production signing configuration was not reviewed.
 - The casebook schema is versioned (`CASEBOOK_SCHEMA_VERSION = 4`; IndexedDB schema version 2) and rejects newer casebook data; this source review does not validate all OEM storage failure modes.
 - No device penetration test, device/OEM behavior review, or runtime network capture was performed for this update.
+
+- **Storage meter (4c).** `BudgetMeter` (`src/components/casebook/budget-meter.tsx`, pure helper `budget-meter.ts`) shows "X of 30 MB used" with a `role="progressbar"` bar on procedure and consult detail and in the procedure form (including files chosen but not yet saved). States: ok, nearly-full (80% or more, "Nearly full"), full (at or over 30 MB, "Full. Remove a file to add more"). Used MB rounds up; over-budget patients show the real figure with the bar capped at 100%. Not restored rows are not counted and a one-line note appears when any exist. No file names; UI only, limits unchanged.

@@ -20,6 +20,7 @@ import {
   patientAttachmentList,
 } from "@/lib/casebook/detail-data";
 import { useBackLayer } from "@/lib/casebook/back";
+import { BudgetMeter } from "@/components/casebook/budget-meter";
 import { PATIENT_BUDGET_LABEL, remainingBytes } from "@/lib/casebook/patient-budget";
 import { useCasebook } from "@/lib/casebook/store";
 import type { Attachment, Consult, ContactKind, FlyOrigin, Patient, Surgery } from "@/lib/casebook/types";
@@ -643,6 +644,7 @@ function ConsultBlock({
             placeholder="Consult note"
           />
           <p className="limit-note">{limitCopy()}</p>
+          <BudgetMeter patientId={patientId} />
           <AttachControls remaining={slots} onFiles={(list) => void add(list)} />
           <FileList
             files={consult.attachments}
@@ -767,6 +769,7 @@ function SurgeryBlock({
             placeholder="Type the anaesthetic note"
           />
           <p className="limit-note">{limitCopy()}</p>
+          <BudgetMeter patientId={patientId} />
           <AttachControls remaining={slots} onFiles={(list) => void add(list)} />
           <FileList
             files={surgery.attachments}

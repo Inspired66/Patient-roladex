@@ -152,3 +152,5 @@ Audio attachments use the WebView player only when its `canPlayType` check accep
 ## Attachment budget
 
 The only attachment limit is 30 MB per patient across its consults and procedures, enforced in the web layer before any file is stored (`src/lib/casebook/patient-budget.ts`). Native keeps only sanity bounds: one file at most 30 MiB (`NativeAttachmentPolicy.MAX_FILE_BYTES`), at most 100 files per chooser selection (`MAX_PICK_ITEMS`), and the unchanged recorder, restore (64 MB), save and hand-off (30 MB) limits. Files reach the page through the WebView chooser, not through Java byte arrays.
+
+The web UI shows an "Attachment space" meter (used of 30 MB, states ok / nearly full at 80% / full) next to the attachment controls. It is display only and changes no limit.

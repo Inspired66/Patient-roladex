@@ -324,3 +324,8 @@ Gates per batch: `npm run typecheck`, `npm run lint`, `npm test`, and `android/b
 - Removed the unregistered `VellumBridge`, its duplicate save/picker methods, `__vellumFile*` chunked attachment delivery path, `PICK_REQ` handling, and related dead helpers. The active `VellumNative` message actions and save/open transfer paths remain.
 - Removed the legacy system `RECORD_SOUND_ACTION` from the unarmed chooser fallback and its manifest `<queries>` entry. The existing unarmed `ACTION_GET_CONTENT` fallback remains; the `VIEW` package-visibility entries for attachment hand-off remain.
 - `android/test-security-hardening.py` asserts the removed bridge/actions stay absent and WebView permission requests remain unconditionally denied. No picker, camera, recorder, attachment limit, backup, restore, or opener behavior was intentionally changed.
+
+## Batch 4 notes
+
+- 4b: the per-file (4 MiB) and file-count (8) caps were replaced by one 30 MB budget per patient (`patient-budget.ts`), enforced before any blob is written; batches are all-or-nothing; Not restored rows do not count; restore is never limited. Kept: recorder 3 MiB / 180 s, 64 MiB backup save/restore, 30 MiB native sanity ceiling, 100 files per selection.
+- 4c: storage meter UI (see architecture-review.md).
