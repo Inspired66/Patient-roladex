@@ -135,6 +135,7 @@ public class MainActivity extends Activity {
     // A killed process can leave capture files behind: nothing in flight survives a restart.
     sweepCameraFiles(true);
     sweepVoiceFiles(true);
+    NativeSavePolicy.sweepBuffers(getCacheDir());
     openTransfer = new NativeOpenPolicy.Transfer(openRoot());
     dropOpenCopies();
     webView = new WebView(this);
@@ -1933,6 +1934,7 @@ public class MainActivity extends Activity {
 
   private void deleteSaveBuffer(File file) {
     if (file != null && file.exists()) file.delete();
+    NativeSavePolicy.markDone(file);
   }
 
   private Uri findChild(Uri tree, String name) {
@@ -2081,18 +2083,12 @@ public class MainActivity extends Activity {
         OutputStream buffer = null;
         try {
           bufferFile = File.createTempFile("vellum-save-", ".tmp", getCacheDir());
+          NativeSavePolicy.markActive(bufferFile);
           buffer = new FileOutputStream(bufferFile, false);
         } catch (IOException error) {
           deleteSaveBuffer(bufferFile);
           signalPicker(false);
           return;
-        }
-        int flags = data.getFlags()
-            & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-        try {
-          getContentResolver().takePersistableUriPermission(data.getData(), flags);
-        } catch (SecurityException ignored) {
-          /* the write can still use the one-shot grant */
         }
         synchronized (saveLock) {
           saveTree = data.getData();
@@ -2178,6 +2174,7 @@ public class MainActivity extends Activity {
       saveTree = null;
       saveReady = false;
     }
+    NativeSavePolicy.sweepBuffers(getCacheDir());
     pickerUris.clear();
     pendingReplies.clear();
     if (webView != null) webView.destroy();

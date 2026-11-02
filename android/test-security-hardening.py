@@ -107,6 +107,20 @@ class WebAssetCheckTest(unittest.TestCase):
         self.assertIn("Choose an image, audio recording, PDF, or plain-text file.", source)
         self.assertIn("NativeAttachmentPolicy.isAllowedType(mime, name)", source)
 
+    def test_save_buffers_are_swept_and_no_grant_is_persisted(self) -> None:
+        root = Path(__file__).parent
+        source = (root / "src/com/vellum/casebook/MainActivity.java").read_text(encoding="utf-8")
+        self.assertNotIn("takePersistableUriPermission", source)
+        self.assertNotIn("FLAG_GRANT_PERSISTABLE_URI_PERMISSION", source)
+        create = source.split("protected void onCreate", 1)[1].split("webView = new WebView", 1)[0]
+        self.assertIn("NativeSavePolicy.sweepBuffers(getCacheDir())", create)
+        destroy = source.split("protected void onDestroy", 1)[1].split("super.onDestroy()", 1)[0]
+        self.assertIn("NativeSavePolicy.sweepBuffers(getCacheDir())", destroy)
+        self.assertIn("NativeSavePolicy.markActive(bufferFile)", source)
+        self.assertIn("NativeSavePolicy.markDone(file)", source)
+        policy = (root / "src/com/vellum/casebook/NativeSavePolicy.java").read_text(encoding="utf-8")
+        self.assertIn("if (ACTIVE.contains(file.getAbsolutePath())) continue;", policy)
+
     def test_open_in_another_app_handoff_stays_narrow(self) -> None:
         root = Path(__file__).parent
         source = (root / "src/com/vellum/casebook/MainActivity.java").read_text(encoding="utf-8")
