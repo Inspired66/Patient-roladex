@@ -4,6 +4,8 @@ import test from "node:test";
 import { attachmentPickerConfig } from "./attachment-menu.ts";
 import {
   CAMERA_MESSAGES,
+  CAMERA_SHRINK_HINT_OFF,
+  CAMERA_SHRINK_HINT_ON,
   CAMERA_SHRINK_KEY,
   CAMERA_STATUS_CODES,
   cameraStatusView,
@@ -69,7 +71,11 @@ test("messages say what to do and never name a file", () => {
   assert.match(CAMERA_MESSAGES.denied, /Photos instead/);
   assert.match(CAMERA_MESSAGES["too-large"], /4 MB/);
   assert.match(CAMERA_MESSAGES["too-large-original"], /Shrink camera photos/);
-  assert.match(CAMERA_MESSAGES.fallback, /location removed/);
+  assert.match(CAMERA_MESSAGES.fallback, /GPS location tags removed/);
+  assert.match(CAMERA_MESSAGES.reencoded, /GPS location tags/);
+  assert.match(CAMERA_SHRINK_HINT_OFF, /Only GPS location tags are removed/);
+  assert.doesNotMatch(CAMERA_SHRINK_HINT_OFF, /Location is still removed/);
+  assert.match(CAMERA_SHRINK_HINT_ON, /without location or camera details/);
   for (const message of Object.values(CAMERA_MESSAGES)) {
     assert.doesNotMatch(message, /\.jpe?g|vellum-\d/i);
   }

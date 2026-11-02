@@ -36,16 +36,16 @@ export const CAMERA_MESSAGES: Record<CameraStatus, string> = {
     "The photo is still larger than 4 MB after shrinking. Try again, or choose Photos instead.",
   "too-large-original":
     "That photo is larger than 4 MB. Turn on “Shrink camera photos” to add it.",
-  fallback: "The photo could not be shrunk, so the original was added with its location removed.",
+  fallback: "The photo could not be shrunk, so the original was added with its GPS location tags removed.",
   reencoded:
-    "Location could not be removed from the original, so the photo was shrunk and cleaned instead.",
+    "GPS location tags could not be removed from the original, so the photo was shrunk and cleaned instead.",
 };
 
 export const CAMERA_SHRINK_LABEL = "Shrink camera photos (recommended)";
 export const CAMERA_SHRINK_HINT_ON =
   "Camera photos are resized and saved without location or camera details.";
 export const CAMERA_SHRINK_HINT_OFF =
-  "Off keeps the original size and quality, with camera details such as device model and time. Location is still removed.";
+  "Off keeps the original size and quality, with camera details such as device model and time. Only GPS location tags are removed; other embedded information may remain.";
 
 export function isCameraStatus(value: unknown): value is CameraStatus {
   return typeof value === "string" && (CAMERA_STATUS_CODES as readonly string[]).includes(value);
