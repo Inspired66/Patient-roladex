@@ -40,7 +40,7 @@ Also read `AGENTS.md` (platform contract) and `docs/architecture-review.md` (sta
 - Camera captures go to `cacheDir/camera` through the non-exported `VellumFileProvider`; never write patient files to shared storage or MediaStore.
 - The provider exposes only `cache/open/`, `cache/camera/`, and `cache/voice/`. Open hand-off copies are purged at app start, on resume, before a new hand-off, and on destroy. Camera and voice cache sweeps remove all files at app start/destroy and stale files on resume; preserve the active or held recording until delivery/cancel.
 - `NativeOpenPolicy` governs the read-only external-view hand-off; it uses a bounded sequential transfer and a neutral filename. Camera and voice capture details and cleanup stay in `NativeCameraPolicy` / `NativeRecorderPolicy` and their tested native integrations.
-- A data-only restore may attach indexed files as **Not restored**; keep their metadata and fingerprints intact, and keep the restore-in-progress/orphan-sweep guard. Do not weaken restore atomicity or attachment limits.
+- A data-only restore may attach indexed files as **Not restored**; keep their metadata and fingerprints intact, and keep the restore-in-progress/orphan-sweep guard (the sweep also skips adds in progress, marks first and deletes only after 24 h unreferenced). Do not weaken restore atomicity or attachment limits.
 
 ## Tests and gates
 

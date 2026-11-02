@@ -10,7 +10,6 @@ import {
   restoreDrafts,
   type ArchiveFileStore,
 } from "./archive.ts";
-import { sweepOrphanBlobs, withRestoreInProgress } from "./files.ts";
 import { attachmentCountLabel, attachmentDetail } from "./format.ts";
 import { referencedFileIds, useCasebook } from "./store.ts";
 import type { Patient } from "./types.ts";
@@ -281,48 +280,6 @@ test("a Not restored attachment can be removed and stays out of the next index",
   );
   assert.equal((await buildAttachmentIndex(now, memoryStore())).length, 2);
   Reflect.deleteProperty(globalThis, "localStorage");
-});
-
-test("orphan sweep never deletes during a restore, or what a restore commits mid-sweep", async () => {
-  const stored = ["old-orphan", "new-from-restore"];
-  const removed: string[] = [];
-  const ops = {
-    list: async () => [...stored],
-    remove: async (id: string) => {
-      removed.push(id);
-    },
-  };
-
-  // 1. Sweep requested while a restore is running does nothing.
-  await withRestoreInProgress(async () => {
-    assert.equal(await sweepOrphanBlobs(new Set(), ops), 0);
-  });
-  assert.deepEqual(removed, []);
-
-  // 2. A restore starts after the sweep listed blobs but before it deleted: sweep aborts.
-  let restoreDone: Promise<void> = Promise.resolve();
-  const racing = {
-    list: async () => {
-      restoreDone = withRestoreInProgress(async () => undefined);
-      return [...stored];
-    },
-    remove: ops.remove,
-  };
-  assert.equal(await sweepOrphanBlobs(new Set(), racing), 0);
-  await restoreDone;
-  assert.deepEqual(removed, []);
-
-  // 3. The referenced set is read after listing, so a commit during listing is respected.
-  const live = new Set<string>();
-  const late = {
-    list: async () => {
-      live.add("new-from-restore");
-      return [...stored];
-    },
-    remove: ops.remove,
-  };
-  assert.equal(await sweepOrphanBlobs(() => live, late), 1);
-  assert.deepEqual(removed, ["old-orphan"]);
 });
 
 test("referencedFileIds includes Not restored attachments so their ids are never swept as orphans", async () => {

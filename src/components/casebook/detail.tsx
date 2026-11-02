@@ -6,7 +6,15 @@ import { ExternalOpenNotice } from "@/components/casebook/external-notice";
 import { AttachmentRow } from "@/components/casebook/attachment-row";
 import { AttachmentCount } from "@/components/casebook/attachment-count";
 import { Confirm } from "@/components/casebook/forms";
-import { acceptFiles, deleteBlob, fileLimitLabel, MAX_FILES, MAX_RECORDING_SECONDS, putBlob } from "@/lib/casebook/files";
+import {
+  acceptFiles,
+  deleteBlob,
+  fileLimitLabel,
+  MAX_FILES,
+  MAX_RECORDING_SECONDS,
+  putBlob,
+  withBlobWriteInProgress,
+} from "@/lib/casebook/files";
 import { ageLabel, displayName, formatDob, patientTimeline, todayISO } from "@/lib/casebook/format";
 import {
   attachmentRowModel,
@@ -560,12 +568,14 @@ function ConsultBlock({
     return () => window.clearTimeout(timer);
   }, [consult.id, consult.notes, draft, patientId, updateConsult]);
 
-  async function add(list: File[]) {
-    const result = await storeIncoming(consult.attachments, list);
-    if (result.attachments !== consult.attachments) {
-      updateConsult(patientId, consult.id, { attachments: result.attachments });
-    }
-    setError(result.error);
+  function add(list: File[]) {
+    return withBlobWriteInProgress(async () => {
+      const result = await storeIncoming(consult.attachments, list);
+      if (result.attachments !== consult.attachments) {
+        updateConsult(patientId, consult.id, { attachments: result.attachments });
+      }
+      setError(result.error);
+    });
   }
 
   return (
@@ -678,12 +688,14 @@ function SurgeryBlock({
     return () => window.clearTimeout(timer);
   }, [draft, patientId, surgery.id, surgery.notes, updateSurgery]);
 
-  async function add(list: File[]) {
-    const result = await storeIncoming(surgery.attachments, list);
-    if (result.attachments !== surgery.attachments) {
-      updateSurgery(patientId, surgery.id, { attachments: result.attachments });
-    }
-    setError(result.error);
+  function add(list: File[]) {
+    return withBlobWriteInProgress(async () => {
+      const result = await storeIncoming(surgery.attachments, list);
+      if (result.attachments !== surgery.attachments) {
+        updateSurgery(patientId, surgery.id, { attachments: result.attachments });
+      }
+      setError(result.error);
+    });
   }
 
   const upcoming = surgery.date > todayISO();

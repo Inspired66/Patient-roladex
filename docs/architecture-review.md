@@ -91,6 +91,7 @@ The manifest declares `CAMERA`, `INTERNET`, and `RECORD_AUDIO`. Camera and micro
 - The existing encrypted full archive uses `VELLUM1` and can carry attachment bytes. Plaintext CSV remains an explicit, warned export option. Backup files are saved through the system document picker; the app does not use external storage as private patient-data storage.
 - Restore decrypts/parses before confirmation, builds restored records and any blobs off to the side, applies the attachment index, then invokes one casebook replacement. Failure before that swap cleans temporary blobs and leaves the existing casebook unchanged.
 - `withRestoreInProgress` and a restore epoch guard the orphan-blob sweep. A sweep that overlaps restore or observes a changed restore epoch aborts before deleting blobs needed by the restore.
+- Orphan sweep (4a): runs once per load, only after the casebook loaded without error. It counts a blob as referenced if it appears in this tab's records or in the stored casebook (another tab may have saved newer records); an unreadable stored casebook aborts the sweep. It never runs during a restore or an add/save (`withRestoreInProgress`, `withBlobWriteInProgress`, shared activity epoch). An unreferenced blob is only marked (`orphan:<id>` = first-seen time in the IndexedDB `metadata` store, no schema change) and is deleted after 24 hours of staying unreferenced, after a final re-check. Blobs that become referenced again lose their mark.
 
 ## Superseded implementation and review status
 

@@ -170,42 +170,129 @@ export function orphanedBlobIds(stored: string[], referenced: Set<string>) {
   return stored.filter((id) => !referenced.has(id));
 }
 
-// A restore writes new blobs before the records that reference them are committed, so the sweep
-// must not run alongside it. `restoreEpoch` also catches a restore that starts while a sweep is
-// between listing blobs and deleting them.
+// A restore or an add writes blobs before the records that reference them are saved, so the sweep
+// must not run alongside either. `activityEpoch` also catches work that starts and finishes while
+// a sweep is between listing blobs and deleting them.
 let restoresInProgress = 0;
-let restoreEpoch = 0;
+let writesInProgress = 0;
+let activityEpoch = 0;
 
-export async function withRestoreInProgress<T>(work: () => Promise<T>): Promise<T> {
-  restoresInProgress += 1;
-  restoreEpoch += 1;
+async function trackActivity<T>(kind: "restore" | "write", work: () => Promise<T>): Promise<T> {
+  if (kind === "restore") restoresInProgress += 1;
+  else writesInProgress += 1;
+  activityEpoch += 1;
   try {
     return await work();
   } finally {
-    restoresInProgress -= 1;
-    restoreEpoch += 1;
+    if (kind === "restore") restoresInProgress -= 1;
+    else writesInProgress -= 1;
+    activityEpoch += 1;
   }
 }
 
-type SweepStore = { list: () => Promise<string[]>; remove: (id: string) => Promise<void> };
+export function withRestoreInProgress<T>(work: () => Promise<T>): Promise<T> {
+  return trackActivity("restore", work);
+}
 
-// `referenced` is read again right before deleting, so a commit that lands while the sweep is
-// listing blobs is respected. Returns the number of blobs deleted.
+// Wrap every flow that stores blobs and then saves the record that references them.
+export function withBlobWriteInProgress<T>(work: () => Promise<T>): Promise<T> {
+  return trackActivity("write", work);
+}
+
+// An unreferenced blob is only marked the first time it is seen, and is deleted only once it has
+// stayed unreferenced for this long. The mark is the quarantine: nothing is moved or lost before then.
+export const ORPHAN_GRACE_MS = 24 * 60 * 60 * 1000;
+const ORPHAN_MARK_PREFIX = "orphan:";
+
+function runMeta<T>(
+  mode: IDBTransactionMode,
+  fn: (store: IDBObjectStore) => IDBRequest<T>,
+): Promise<T> {
+  return openDb().then(
+    (db) =>
+      new Promise<T>((resolve, reject) => {
+        const tx = db.transaction(METADATA_STORE, mode);
+        const request = fn(tx.objectStore(METADATA_STORE));
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error ?? new Error("File storage failed"));
+        tx.oncomplete = () => db.close();
+        tx.onerror = () => {
+          db.close();
+          reject(tx.error ?? new Error("File storage failed"));
+        };
+      }),
+  );
+}
+
+async function listOrphanMarks() {
+  const keys = await runMeta<IDBValidKey[]>("readonly", (store) => store.getAllKeys());
+  const marks = new Map<string, number>();
+  for (const key of keys) {
+    if (typeof key !== "string" || !key.startsWith(ORPHAN_MARK_PREFIX)) continue;
+    const value = await runMeta<unknown>("readonly", (store) => store.get(key));
+    if (typeof value === "number" && Number.isFinite(value)) {
+      marks.set(key.slice(ORPHAN_MARK_PREFIX.length), value);
+    }
+  }
+  return marks;
+}
+
+type SweepStore = {
+  list: () => Promise<string[]>;
+  remove: (id: string) => Promise<void>;
+  marks: () => Promise<Map<string, number>>;
+  mark: (id: string, firstSeen: number) => Promise<void>;
+  unmark: (id: string) => Promise<void>;
+  now: () => number;
+};
+
+const defaultSweepStore: SweepStore = {
+  list: listBlobIds,
+  remove: deleteBlob,
+  marks: listOrphanMarks,
+  mark: (id, firstSeen) =>
+    runMeta("readwrite", (store) => store.put(firstSeen, ORPHAN_MARK_PREFIX + id)).then(
+      () => undefined,
+    ),
+  unmark: (id) =>
+    runMeta("readwrite", (store) => store.delete(ORPHAN_MARK_PREFIX + id)).then(() => undefined),
+  now: () => Date.now(),
+};
+
+// `referenced` is read again right before deleting, and may throw when the stored casebook cannot
+// be read safely, which aborts the sweep. `ready` must be true only after the casebook has loaded.
+// Returns the number of blobs deleted.
 export async function sweepOrphanBlobs(
   referenced: Set<string> | (() => Set<string>),
-  store: SweepStore | undefined = undefined,
+  options: { store?: SweepStore; ready?: () => boolean; graceMs?: number } = {},
 ) {
+  const { store, ready = () => true, graceMs = ORPHAN_GRACE_MS } = options;
   if (!store && typeof indexedDB === "undefined") return 0;
-  const ops = store ?? { list: listBlobIds, remove: deleteBlob };
-  if (restoresInProgress > 0) return 0;
-  const epoch = restoreEpoch;
+  const ops = store ?? defaultSweepStore;
+  const busy = () => restoresInProgress > 0 || writesInProgress > 0 || !ready();
+  if (busy()) return 0;
+  const epoch = activityEpoch;
   const stored = await ops.list();
-  if (restoresInProgress > 0 || restoreEpoch !== epoch) return 0;
+  const marks = await ops.marks();
+  if (busy() || activityEpoch !== epoch) return 0;
   const current = typeof referenced === "function" ? referenced() : referenced;
+  const orphans = new Set(orphanedBlobIds(stored, current));
+  for (const id of marks.keys()) {
+    if (!orphans.has(id)) await ops.unmark(id);
+  }
   let deleted = 0;
-  for (const id of orphanedBlobIds(stored, current)) {
-    if (restoresInProgress > 0 || restoreEpoch !== epoch) break;
+  for (const id of orphans) {
+    const firstSeen = marks.get(id);
+    if (firstSeen === undefined || firstSeen > ops.now()) {
+      await ops.mark(id, ops.now());
+      continue;
+    }
+    if (ops.now() - firstSeen < graceMs) continue;
+    if (busy() || activityEpoch !== epoch) break;
+    // Re-check just before deleting, so a record saved since the listing is respected.
+    if ((typeof referenced === "function" ? referenced() : referenced).has(id)) continue;
     await ops.remove(id);
+    await ops.unmark(id);
     deleted += 1;
   }
   return deleted;

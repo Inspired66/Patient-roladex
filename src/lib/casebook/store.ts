@@ -450,6 +450,16 @@ export const useCasebook = create<CasebookState>()(
   ),
 );
 
+// Another tab may have saved records this tab has not seen, so both views count as referenced. An
+// unreadable stored casebook throws, which aborts the sweep.
+function referencedForSweep() {
+  const ids = referencedFileIds(useCasebook.getState().patients);
+  const raw = localStorage.getItem(CASEBOOK_STORAGE_KEY);
+  if (!raw) throw new Error("No stored casebook.");
+  for (const id of referencedFileIds(migrateStoredCasebook(raw).patients)) ids.add(id);
+  return ids;
+}
+
 let bootstrapped = false;
 
 export function bootstrapCasebook() {
@@ -461,9 +471,9 @@ export function bootstrapCasebook() {
       const { patients, contacts } = migrateStoredCasebook(raw);
       storageWritesEnabled = true;
       useCasebook.setState({ patients, contacts, hydrated: true, storageError: null });
-      void sweepOrphanBlobs(() => referencedFileIds(useCasebook.getState().patients)).catch(
-        () => undefined,
-      );
+      void sweepOrphanBlobs(referencedForSweep, {
+        ready: () => storageWritesEnabled && useCasebook.getState().storageError === null,
+      }).catch(() => undefined);
       return;
     }
     storageWritesEnabled = true;

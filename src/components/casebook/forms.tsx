@@ -1,7 +1,15 @@
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { AttachControls } from "@/components/casebook/attach";
 import { attachmentSelectionMessage } from "@/lib/casebook/attachment-menu";
-import { acceptFiles, deleteBlob, fileLimitLabel, MAX_FILES, MAX_RECORDING_SECONDS, putBlob } from "@/lib/casebook/files";
+import {
+  acceptFiles,
+  deleteBlob,
+  fileLimitLabel,
+  MAX_FILES,
+  MAX_RECORDING_SECONDS,
+  putBlob,
+  withBlobWriteInProgress,
+} from "@/lib/casebook/files";
 import { choiceNames, displayName, formatBytes, given, joinName, knownHospitals, knownSurgeons, surname, todayISO } from "@/lib/casebook/format";
 import { useBackLayer } from "@/lib/casebook/back";
 import { useCasebook } from "@/lib/casebook/store";
@@ -330,26 +338,28 @@ export function SurgeryForm({
     }
     setBusy(true);
     const attachments: Attachment[] = [];
-    try {
-      for (const pending of files) {
-        const id = crypto.randomUUID();
-        await putBlob(id, pending.file);
-        attachments.push({
-          id,
-          name: pending.file.name,
-          mime: pending.file.type || "application/octet-stream",
-          size: pending.file.size,
-          addedAt: new Date().toISOString(),
-        });
+    await withBlobWriteInProgress(async () => {
+      try {
+        for (const pending of files) {
+          const id = crypto.randomUUID();
+          await putBlob(id, pending.file);
+          attachments.push({
+            id,
+            name: pending.file.name,
+            mime: pending.file.type || "application/octet-stream",
+            size: pending.file.size,
+            addedAt: new Date().toISOString(),
+          });
+        }
+        const input: SurgeryInput = { ...inputBase, notes: notes.trim(), attachments };
+        addSurgery(patientId, input);
+        onClose();
+      } catch {
+        for (const file of attachments) void deleteBlob(file.id).catch(() => undefined);
+        setError("Could not store a file on this device.");
+        setBusy(false);
       }
-      const input: SurgeryInput = { ...inputBase, notes: notes.trim(), attachments };
-      addSurgery(patientId, input);
-      onClose();
-    } catch {
-      for (const file of attachments) void deleteBlob(file.id).catch(() => undefined);
-      setError("Could not store a file on this device.");
-      setBusy(false);
-    }
+    });
   }
 
   return (
