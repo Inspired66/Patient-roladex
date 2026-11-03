@@ -16,6 +16,7 @@ import {
   isVellumFileName,
   openVellumAttachment,
   sealVellumAttachment,
+  sealedSize,
   validateBackupSet,
   type AttachmentSealMeta,
 } from "./attachment-archive.ts";
@@ -386,4 +387,23 @@ test("crypto errors never disclose names, ids or numeric patient data", async ()
       return true;
     },
   );
+});
+
+test("sealedSize equals the real sealed length", async () => {
+  const sizes = [1, 65_535, 65_536, 65_537, 30 * 1024 * 1024];
+  for (const size of sizes) {
+    const bytes = new Uint8Array(size);
+    for (let index = 0; index < size; index += 4093) bytes[index] = index & 0xff;
+    const value = meta(size, { sha256: await digest(bytes) });
+    const sealed = await seal(bytes, value);
+    const total = sealed.frames.reduce((sum, frame) => sum + frame.byteLength, 0);
+    assert.equal(sealedSize(value), total);
+  }
+});
+
+test("sealedSize rejects the same sizes as the sealer", () => {
+  for (const size of [0, -1, 1.5, Number.NaN, MAX_BACKUP_FILE_BYTES + 1]) {
+    assert.throws(() => sealedSize(meta(size)), { message: BACKUP_FILE_ERROR });
+  }
+  assert.throws(() => sealedSize(meta(5, { sha256: "xyz" })), { message: BACKUP_FILE_ERROR });
 });

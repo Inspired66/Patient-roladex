@@ -288,6 +288,29 @@ export function validateBackupSet(value: unknown): BackupSet {
   };
 }
 
+function metaJson(meta: AttachmentSealMeta) {
+  return JSON.stringify({
+    id: meta.id,
+    patientId: meta.patientId,
+    ownerKind: meta.ownerKind,
+    ownerId: meta.ownerId,
+    size: meta.size,
+    sha256: meta.sha256,
+  });
+}
+
+// Exact byte length of the sealed file: header, meta frame (2-byte length + sealed meta), data frames.
+export function sealedSize(meta: AttachmentSealMeta) {
+  try {
+    checkMeta(meta);
+  } catch {
+    fail();
+  }
+  const frameCount = Math.ceil(meta.size / BACKUP_FRAME_SIZE);
+  const metaPlain = 2 + encoder.encode(metaJson(meta)).byteLength;
+  return HEADER_BYTES + 2 + metaPlain + GCM_TAG_BYTES + meta.size + frameCount * GCM_TAG_BYTES;
+}
+
 async function sealVellumAttachmentImpl(
   blob: Blob,
   masterKey: CryptoKey,
@@ -312,16 +335,7 @@ async function sealVellumAttachmentImpl(
   const key = await deriveFileKey(masterKey, fileSalt, setIdHex);
   await onFrame(header);
 
-  const metaBytes = encoder.encode(
-    JSON.stringify({
-      id: meta.id,
-      patientId: meta.patientId,
-      ownerKind: meta.ownerKind,
-      ownerId: meta.ownerId,
-      size: meta.size,
-      sha256: meta.sha256,
-    }),
-  );
+  const metaBytes = encoder.encode(metaJson(meta));
   const metaPlain = concat(writeU16(metaBytes.byteLength), metaBytes);
   const metaCipher = new Uint8Array(
     await crypto.subtle.encrypt(
