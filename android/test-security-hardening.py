@@ -292,6 +292,89 @@ class WebAssetCheckTest(unittest.TestCase):
         self.assertNotIn("FOREGROUND_SERVICE", (root / "AndroidManifest.xml").read_text(encoding="utf-8"))
         self.assertNotIn("foregroundServiceType", (root / "AndroidManifest.xml").read_text(encoding="utf-8"))
 
+    def test_backup_folder_bridge_is_temporary_bounded_and_origin_gated(self) -> None:
+        root = Path(__file__).parent
+        source = (root / "src/com/vellum/casebook/MainActivity.java").read_text(encoding="utf-8")
+        policy = (root / "src/com/vellum/casebook/NativeBackupFolderPolicy.java").read_text(encoding="utf-8")
+        manifest = (root / "AndroidManifest.xml").read_text(encoding="utf-8")
+        actions = (
+            "armBackupFolder",
+            "listBackupFolder",
+            "beginBackupFile",
+            "writeBackupChunk",
+            "finishBackupFile",
+            "abortBackupFile",
+            "readBackupChunk",
+            "closeBackupFolder",
+        )
+        dispatch = source.split("private void handleNativeMessage", 1)[1].split(
+            "private void sendNativeResult", 1
+        )[0]
+        allowed = source.split("private boolean isActionAllowed(", 1)[1].split(
+            "\n  private ", 1
+        )[0]
+        for action in actions:
+            self.assertIn(f'case "{action}":', dispatch)
+            self.assertIn(f'{action}(id, request, payload);', dispatch)
+            self.assertIn(f'case "{action}":', allowed)
+        self.assertIn("return isTrustedCurrentPage();", allowed)
+        self.assertIn("NativeBackupFolderPolicy.isValidRequestId(id)", source)
+        self.assertIn("hasExactRequestShape", source)
+        self.assertIn("static boolean isValidName", policy)
+        self.assertIn('^vellum-[a-z2-7]{26}\\\\.(vea|vellum)$', policy)
+        self.assertIn("MAX_CHUNK_BYTES = 96 * 1024", policy)
+        self.assertIn("MAX_LIST_PAGE = 200", policy)
+        self.assertIn("MAX_ENTRIES = 20_001", policy)
+
+        self.assertNotIn("takePersistableUriPermission", source)
+        self.assertNotIn("FLAG_GRANT_PERSISTABLE_URI_PERMISSION", source)
+        self.assertNotIn("OPEN_DOCUMENT_TREE", manifest)
+        permissions = sorted(re.findall(r'uses-permission android:name="([^"]+)"', manifest))
+        self.assertEqual(
+            permissions,
+            sorted(
+                [
+                    "android.permission.CAMERA",
+                    "android.permission.INTERNET",
+                    "android.permission.RECORD_AUDIO",
+                ]
+            ),
+        )
+
+        status = source.split("private void notifyBackupStatus(", 1)[1].split(
+            "\n  private ", 1
+        )[0]
+        self.assertIn("NativeBackupFolderPolicy.isStatusCode(code)", status)
+        self.assertIn("isTrustedCurrentPage()", status)
+        for code in ("paused", "folder-lost", "no-space", "cancelled", "done", "name-changed"):
+            self.assertIn(
+                f"script = \"window.__vellumBackupStatus&&window.__vellumBackupStatus('{code}')\"",
+                status,
+            )
+        self.assertNotIn(" + ", status)
+
+        backup_methods = source.split("private void armBackupFolder(", 1)[1].split(
+            "private void readList(", 1
+        )[0]
+        self.assertNotIn("Log.", backup_methods)
+        self.assertNotIn("System.out", backup_methods)
+        self.assertNotIn("Log.", policy)
+        self.assertNotIn("System.out", policy)
+        self.assertIn("DocumentsContract.createDocument", backup_methods)
+        self.assertIn('openOutputStream(created, "w")', backup_methods)
+        self.assertIn("buildChildDocumentsUriUsingTree", backup_methods)
+        self.assertIn("openFileDescriptor(document, \"r\")", backup_methods)
+        self.assertIn("getContentResolver().delete(created", backup_methods)
+        self.assertIn("backupFolderPolicy.clearArm()", source.split(
+            "protected void onPause()", 1
+        )[1].split("\n  @Override", 1)[0])
+        self.assertIn("closeBackupSession(true)", source.split(
+            "protected void onStop()", 1
+        )[1].split("\n  @Override", 1)[0])
+        self.assertIn("closeBackupSession(false)", source.split(
+            "protected void onDestroy()", 1
+        )[1].split("super.onDestroy()", 1)[0])
+
     def test_android_build_uses_pinned_webkit_and_scans_packaged_assets(self) -> None:
         build = Path(__file__).with_name("build-apk.sh").read_text(encoding="utf-8")
         self.assertIn("export VITE_GROK_EXTENSIONS=0", build)
