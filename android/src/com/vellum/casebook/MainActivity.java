@@ -950,6 +950,7 @@ public class MainActivity extends Activity {
     backupFolderPolicy.closeForLifecycle();
     backupTreeUri = null;
     backupRefUris.clear();
+    getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     if (wasOpen && reportPaused) notifyBackupStatus(NativeBackupFolderPolicy.PAUSED);
   }
 
@@ -2462,6 +2463,9 @@ public class MainActivity extends Activity {
       } else {
         backupTreeUri = selected;
         backupRefUris.clear();
+        if (NativeBackupFolderPolicy.WRITE.equals(mode)) {
+          getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        }
         sendNativeResult(requestId, statusResult("picked", true));
       }
       return;

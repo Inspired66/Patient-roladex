@@ -378,6 +378,16 @@ class WebAssetCheckTest(unittest.TestCase):
         self.assertIn("NativeBackupFolderPolicy.isCreatedSizeAcceptable(", finish)
         self.assertLess(finish.index("backupOutput.close()"), finish.index("isCreatedSizeAcceptable"))
         self.assertLess(finish.index("isCreatedSizeAcceptable"), finish.index("backupFolderPolicy.finishWrite()"))
+        self.assertEqual(source.count("FLAG_KEEP_SCREEN_ON"), 2)
+        accepted = source.split("backupTreeUri = selected;", 1)[1].split("return;", 1)[0]
+        self.assertIn("NativeBackupFolderPolicy.WRITE.equals(mode)", accepted)
+        self.assertIn("addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)", accepted)
+        self.assertEqual(source.count("addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)"), 1)
+        closing = source.split("private void closeBackupSession(", 1)[1].split("\n  private ", 1)[0]
+        self.assertIn("clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)", closing)
+        self.assertNotIn("WAKE_LOCK", source)
+        self.assertNotIn("PowerManager", source)
+        self.assertNotIn("WAKE_LOCK", manifest)
         begin = source.split("private void beginBackupFile(", 1)[1].split("\n  private ", 1)[0]
         self.assertIn("NativeBackupFolderPolicy.isValidBeginPayloadShape(", begin)
         self.assertIn('hasExactRequestShape(request, payload, "kind", "name", "size")', begin)
