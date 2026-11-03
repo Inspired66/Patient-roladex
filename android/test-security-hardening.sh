@@ -16,6 +16,7 @@ javac --release 17 -d "$BUILD" \
   "$ROOT/android/src/com/vellum/casebook/NativeOpenPolicy.java" \
   "$ROOT/android/src/com/vellum/casebook/NativeOriginPolicy.java" \
   "$ROOT/android/src/com/vellum/casebook/NativeWebAssetMime.java" \
+  "$ROOT/android/src/com/vellum/casebook/NativeBackupFolderPolicy.java" \
   "$ROOT/android/test/com/vellum/casebook/NativeAttachmentPolicyTest.java" \
   "$ROOT/android/test/com/vellum/casebook/NativeAttachmentPickerPolicyTest.java" \
   "$ROOT/android/test/com/vellum/casebook/NativeCameraPolicyTest.java" \
@@ -24,7 +25,8 @@ javac --release 17 -d "$BUILD" \
   "$ROOT/android/test/com/vellum/casebook/NativeSavePolicyTest.java" \
   "$ROOT/android/test/com/vellum/casebook/NativeOpenPolicyTest.java" \
   "$ROOT/android/test/com/vellum/casebook/NativeOriginPolicyTest.java" \
-  "$ROOT/android/test/com/vellum/casebook/NativeWebAssetMimeTest.java"
+  "$ROOT/android/test/com/vellum/casebook/NativeWebAssetMimeTest.java" \
+  "$ROOT/android/test/com/vellum/casebook/NativeBackupFolderPolicyTest.java"
 java -cp "$BUILD" com.vellum.casebook.NativeAttachmentPolicyTest
 java -cp "$BUILD" com.vellum.casebook.NativeAttachmentPickerPolicyTest
 java -cp "$BUILD" com.vellum.casebook.NativeCameraPolicyTest
@@ -34,3 +36,4 @@ java -cp "$BUILD" com.vellum.casebook.NativeSavePolicyTest
 java -cp "$BUILD" com.vellum.casebook.NativeOriginPolicyTest
 java -cp "$BUILD" com.vellum.casebook.NativeWebAssetMimeTest
 java -cp "$BUILD" com.vellum.casebook.NativeOpenPolicyTest
+java -cp "$BUILD" com.vellum.casebook.NativeBackupFolderPolicyTest
