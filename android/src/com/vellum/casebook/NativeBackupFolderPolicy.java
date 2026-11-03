@@ -146,6 +146,7 @@ final class NativeBackupFolderPolicy {
     clearArm();
     boolean hadWrite = inFlight != null;
     closeSession();
+    consumedMode = null;
     return hadWrite;
   }
 
@@ -188,6 +189,11 @@ final class NativeBackupFolderPolicy {
         && offset >= 0
         && offset <= file.size
         && length <= file.size - offset;
+  }
+
+  long listedSize(int ref) {
+    ListedFile file = refs.get(ref);
+    return file == null ? -1 : file.size;
   }
 
   boolean beginWrite(String kind, String name, long size, int fieldCount) {

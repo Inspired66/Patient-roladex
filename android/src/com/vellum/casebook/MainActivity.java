@@ -67,6 +67,7 @@ public class MainActivity extends Activity {
   private static final int SAVE_REQ = 1003;
   private static final int LIST_REQ = 1006;
   private static final int RESTORE_FILE_REQ = 1007;
+  private static final int BACKUP_FOLDER_REQ = 1008;
   private static final int MAX_SAVE_CHUNK_BYTES = 48 * 1024;
   private static final long MAX_SAVE_BYTES = NativeRestorePickerPolicy.MAX_FILE_BYTES;
   private static final long MAX_MIGRATION_ARCHIVE_BYTES = 512L * 1024L * 1024L;
@@ -95,6 +96,7 @@ public class MainActivity extends Activity {
   private final Object saveLock = new Object();
   private final Set<String> pickerUris = Collections.synchronizedSet(new HashSet<>());
   private final NativeRestorePickerPolicy.Arm restorePickerArm = new NativeRestorePickerPolicy.Arm();
+  private final NativeBackupFolderPolicy backupFolderPolicy = NativeBackupFolderPolicy.create();
   private final NativeAttachmentPickerPolicy.Arm attachmentPickerArm =
       new NativeAttachmentPickerPolicy.Arm();
   private int attachmentPickerMaxItems = NativeAttachmentPolicy.MAX_PICK_ITEMS;
@@ -122,6 +124,12 @@ public class MainActivity extends Activity {
   private String pendingSavePickerRequestId;
   private String pendingSaveFinishRequestId;
   private String pendingListRequestId;
+  private String pendingBackupFolderRequestId;
+  private String pendingBackupFolderMode;
+  private Uri backupTreeUri;
+  private OutputStream backupOutput;
+  private Uri backupInFlightUri;
+  private final Map<Integer, Uri> backupRefUris = new HashMap<>();
   private File migrationTempFile;
   private OutputStream migrationOutput;
   private long migrationExpectedBytes;
@@ -360,7 +368,7 @@ public class MainActivity extends Activity {
       String id = request.optString("id", "");
       String action = request.optString("action", "");
       JSONObject payload = request.optJSONObject("payload");
-      if (id.isEmpty() || id.length() > 96 || action.isEmpty()) return;
+      if (!NativeBackupFolderPolicy.isValidRequestId(id) || action.isEmpty()) return;
       if (!isActionAllowed(action)) {
         sendNativeError(replyProxy, id, "That phone action is not allowed from this page.");
         return;
@@ -380,6 +388,30 @@ public class MainActivity extends Activity {
           break;
         case "armAttachmentPicker":
           armAttachmentPicker(id, payload);
+          break;
+        case "armBackupFolder":
+          armBackupFolder(id, request, payload);
+          break;
+        case "listBackupFolder":
+          listBackupFolder(id, request, payload);
+          break;
+        case "beginBackupFile":
+          beginBackupFile(id, request, payload);
+          break;
+        case "writeBackupChunk":
+          writeBackupChunk(id, request, payload);
+          break;
+        case "finishBackupFile":
+          finishBackupFile(id, request, payload);
+          break;
+        case "abortBackupFile":
+          abortBackupFile(id, request, payload);
+          break;
+        case "readBackupChunk":
+          readBackupChunk(id, request, payload);
+          break;
+        case "closeBackupFolder":
+          closeBackupFolder(id, request, payload);
           break;
         case "readList":
           readList(id);
@@ -483,6 +515,14 @@ public class MainActivity extends Activity {
       case "armRestorePicker":
       case "armAttachmentPicker":
       case "readList":
+      case "armBackupFolder":
+      case "listBackupFolder":
+      case "beginBackupFile":
+      case "writeBackupChunk":
+      case "finishBackupFile":
+      case "abortBackupFile":
+      case "readBackupChunk":
+      case "closeBackupFolder":
       case "beginSave":
       case "writeChunk":
       case "finishSave":
@@ -536,6 +576,402 @@ public class MainActivity extends Activity {
       return;
     }
     sendNativeResult(requestId, statusResult("armed", true));
+  }
+
+  private void armBackupFolder(String requestId, JSONObject request, JSONObject payload) {
+    if (!hasExactRequestShape(request, payload, "mode")
+        || !NativeBackupFolderPolicy.isValidArmPayload(
+            payload.length(), payload.opt("mode"))) {
+      sendNativeError(requestId, "That backup folder request is invalid.");
+      return;
+    }
+    if (pendingBackupFolderRequestId != null || backupFolderPolicy.isSessionOpen()) {
+      sendNativeError(requestId, "A backup folder is already in use.");
+      return;
+    }
+    Uri page = Uri.parse(webView.getUrl());
+    String mode = payload.optString("mode", "");
+    long now = SystemClock.elapsedRealtime();
+    if (!backupFolderPolicy.arm(
+        mode, page.getScheme(), page.getHost(), page.getPort(), now)
+        || !mode.equals(backupFolderPolicy.consumeArm(now))
+        || !backupFolderPolicy.openSession(mode)) {
+      sendNativeError(requestId, "That backup folder request is invalid.");
+      return;
+    }
+    pendingBackupFolderRequestId = requestId;
+    pendingBackupFolderMode = mode;
+    try {
+      Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+      intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+      startActivityForResult(intent, BACKUP_FOLDER_REQ);
+    } catch (ActivityNotFoundException error) {
+      pendingBackupFolderRequestId = null;
+      pendingBackupFolderMode = null;
+      closeBackupSession(false);
+      sendNativeError(requestId, "This phone has no app that can select a backup folder.");
+    } catch (RuntimeException error) {
+      pendingBackupFolderRequestId = null;
+      pendingBackupFolderMode = null;
+      closeBackupSession(false);
+      sendNativeError(requestId, "The backup folder picker could not be opened.");
+    }
+  }
+
+  private void listBackupFolder(String requestId, JSONObject request, JSONObject payload) {
+    if (!hasExactRequestShape(request, payload, "cursor")
+        || !backupFolderPolicy.isReadSession()
+        || !isIntRange(payload.opt("cursor"), 0, NativeBackupFolderPolicy.MAX_ENTRIES)) {
+      sendNativeError(requestId, "The backup folder is not available.");
+      return;
+    }
+    int cursor = ((Number) payload.opt("cursor")).intValue();
+    if (cursor < 0) {
+      sendNativeError(requestId, "That backup folder request is invalid.");
+      return;
+    }
+    if (cursor == 0) {
+      backupFolderPolicy.clearListing();
+      backupRefUris.clear();
+      if (!loadBackupFolderEntries()) {
+        notifyBackupStatus(NativeBackupFolderPolicy.FOLDER_LOST);
+        sendNativeError(requestId, "The backup folder could not be read.");
+        return;
+      }
+    }
+    NativeBackupFolderPolicy.ListPage page = backupFolderPolicy.page(cursor);
+    if (page == null) {
+      sendNativeError(requestId, "That backup folder page is not available.");
+      return;
+    }
+    JSONObject result = new JSONObject();
+    JSONArray entries = new JSONArray();
+    try {
+      for (NativeBackupFolderPolicy.ListedFile entry : page.entries) {
+        JSONObject item = new JSONObject();
+        item.put("ref", entry.ref);
+        item.put("size", entry.size);
+        entries.put(item);
+      }
+      result.put("entries", entries);
+      result.put("nextCursor", page.nextCursor == null ? JSONObject.NULL : page.nextCursor);
+    } catch (JSONException error) {
+      sendNativeError(requestId, "The backup folder could not be read.");
+      return;
+    }
+    sendNativeResult(requestId, result);
+  }
+
+  private boolean loadBackupFolderEntries() {
+    Uri tree = backupTreeUri;
+    if (tree == null || !backupFolderPolicy.isReadSession()) return false;
+    Uri children = DocumentsContract.buildChildDocumentsUriUsingTree(
+        tree, DocumentsContract.getTreeDocumentId(tree));
+    Cursor cursor = null;
+    try {
+      cursor = getContentResolver().query(
+          children,
+          new String[] {
+              DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+              DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+              DocumentsContract.Document.COLUMN_SIZE
+          },
+          null,
+          null,
+          null);
+      if (cursor == null) return false;
+      while (cursor.moveToNext()) {
+        if (!backupFolderPolicy.observeDirectoryEntry()) return false;
+        String name = cursor.getString(1);
+        if (!NativeBackupFolderPolicy.isValidName(name)) continue;
+        long size = cursor.isNull(2) ? -1 : cursor.getLong(2);
+        int ref = backupFolderPolicy.registerListedFile(name, size);
+        if (ref > 0) {
+          String documentId = cursor.getString(0);
+          backupRefUris.put(
+              ref, DocumentsContract.buildDocumentUriUsingTree(tree, documentId));
+        }
+      }
+      return true;
+    } catch (RuntimeException error) {
+      return false;
+    } finally {
+      if (cursor != null) cursor.close();
+    }
+  }
+
+  private void beginBackupFile(String requestId, JSONObject request, JSONObject payload) {
+    if (!hasExactRequestShape(request, payload, "kind", "name", "size")
+        || !(payload.opt("kind") instanceof String)
+        || !(payload.opt("name") instanceof String)
+        || !isInteger(payload.opt("size"))) {
+      sendNativeError(requestId, "That backup file request is invalid.");
+      return;
+    }
+    String kind = payload.optString("kind", "");
+    String name = payload.optString("name", "");
+    long size = ((Number) payload.opt("size")).longValue();
+    if (!backupFolderPolicy.beginWrite(kind, name, size, payload.length())) {
+      sendNativeError(requestId, "That backup file request is invalid.");
+      return;
+    }
+    Uri tree = backupTreeUri;
+    if (tree == null) {
+      backupFolderPolicy.abortWrite();
+      sendNativeError(requestId, "The backup folder is not available.");
+      return;
+    }
+    Uri created = null;
+    try {
+      created = DocumentsContract.createDocument(
+          getContentResolver(), tree, "application/octet-stream", name);
+      if (created == null) throw new IOException();
+      String actualName = displayName(created, "");
+      if (!NativeBackupFolderPolicy.isProviderNameUnchanged(name, actualName)) {
+        getContentResolver().delete(created, null, null);
+        backupFolderPolicy.abortWrite();
+        notifyBackupStatus(NativeBackupFolderPolicy.NAME_CHANGED);
+        sendNativeError(requestId, "The backup file name changed. Retry with a new random name.");
+        return;
+      }
+      backupInFlightUri = created;
+      backupOutput = getContentResolver().openOutputStream(created, "w");
+      if (backupOutput == null) throw new IOException();
+      sendNativeResult(requestId, statusResult("started", true));
+    } catch (Exception error) {
+      if (created != null) getContentResolver().delete(created, null, null);
+      clearBackupWriteState();
+      notifyBackupStatus(NativeBackupFolderPolicy.NO_SPACE);
+      sendNativeError(requestId, "The backup file could not be created.");
+    }
+  }
+
+  private void writeBackupChunk(String requestId, JSONObject request, JSONObject payload) {
+    if (!hasExactRequestShape(request, payload, "seq", "data")
+        || !isIntRange(payload.opt("seq"), 0, Integer.MAX_VALUE)
+        || !(payload.opt("data") instanceof String)) {
+      failBackupWrite(requestId, "That backup chunk is invalid.", NativeBackupFolderPolicy.FOLDER_LOST);
+      return;
+    }
+    int seq = ((Number) payload.opt("seq")).intValue();
+    String encoded = payload.optString("data", "");
+    byte[] bytes;
+    try {
+      if (encoded.isEmpty() || encoded.length() > ((NativeBackupFolderPolicy.MAX_CHUNK_BYTES + 2) / 3) * 4
+          || !encoded.matches("^[A-Za-z0-9+/]+={0,2}$")) {
+        throw new IllegalArgumentException();
+      }
+      bytes = android.util.Base64.decode(encoded, android.util.Base64.NO_WRAP);
+      if (bytes.length == 0
+          || bytes.length > NativeBackupFolderPolicy.MAX_CHUNK_BYTES
+          || !android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP).equals(encoded)
+          || !backupFolderPolicy.canWriteChunk(seq, bytes.length)
+          || backupOutput == null) {
+        throw new IllegalArgumentException();
+      }
+      backupOutput.write(bytes);
+      if (!backupFolderPolicy.recordWrittenChunk(seq, bytes.length)) {
+        throw new IOException();
+      }
+      sendNativeResult(requestId, statusResult("written", true));
+    } catch (Exception error) {
+      failBackupWrite(requestId, "The backup file could not be written.", NativeBackupFolderPolicy.FOLDER_LOST);
+    }
+  }
+
+  private void finishBackupFile(String requestId, JSONObject request, JSONObject payload) {
+    if (!hasNoPayload(request, payload) || !backupFolderPolicy.canFinishWrite()
+        || backupOutput == null || backupInFlightUri == null) {
+      failBackupWrite(requestId, "The backup file is incomplete.", NativeBackupFolderPolicy.FOLDER_LOST);
+      return;
+    }
+    try {
+      backupOutput.flush();
+      backupOutput.close();
+      backupOutput = null;
+      if (!backupFolderPolicy.finishWrite()) throw new IOException();
+      backupInFlightUri = null;
+      sendNativeResult(requestId, statusResult("written", true));
+      notifyBackupStatus(NativeBackupFolderPolicy.DONE);
+    } catch (Exception error) {
+      failBackupWrite(requestId, "The backup file could not be finished.", NativeBackupFolderPolicy.NO_SPACE);
+    }
+  }
+
+  private void abortBackupFile(String requestId, JSONObject request, JSONObject payload) {
+    if (!hasNoPayload(request, payload)) {
+      sendNativeError(requestId, "That backup file request is invalid.");
+      return;
+    }
+    abortBackupWrite();
+    sendNativeResult(requestId, statusResult("aborted", true));
+    notifyBackupStatus(NativeBackupFolderPolicy.CANCELLED);
+  }
+
+  private void readBackupChunk(String requestId, JSONObject request, JSONObject payload) {
+    if (!hasExactRequestShape(request, payload, "ref", "offset", "length")
+        || !isIntRange(payload.opt("ref"), 1, NativeBackupFolderPolicy.MAX_ENTRIES)
+        || !isInteger(payload.opt("offset"))
+        || !isIntRange(payload.opt("length"), 1, NativeBackupFolderPolicy.MAX_CHUNK_BYTES)) {
+      sendNativeError(requestId, "That backup read request is invalid.");
+      return;
+    }
+    int ref = ((Number) payload.opt("ref")).intValue();
+    long offset = ((Number) payload.opt("offset")).longValue();
+    int length = ((Number) payload.opt("length")).intValue();
+    Uri document = backupRefUris.get(ref);
+    if (!backupFolderPolicy.isValidRead(ref, offset, length) || document == null) {
+      sendNativeError(requestId, "That backup read request is invalid.");
+      return;
+    }
+    try (ParcelFileDescriptor descriptor =
+             getContentResolver().openFileDescriptor(document, "r")) {
+      if (descriptor == null || descriptor.getStatSize() != backupFolderPolicy.listedSize(ref)) {
+        throw new IOException();
+      }
+      try (FileInputStream input = new FileInputStream(descriptor.getFileDescriptor())) {
+        skipFully(input, offset);
+        byte[] bytes = new byte[length];
+        int read = 0;
+        while (read < length) {
+          int count = input.read(bytes, read, length - read);
+          if (count < 0) throw new IOException();
+          read += count;
+        }
+        JSONObject result = new JSONObject();
+        result.put("data", android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP));
+        sendNativeResult(requestId, result);
+      }
+    } catch (Exception error) {
+      notifyBackupStatus(NativeBackupFolderPolicy.FOLDER_LOST);
+      sendNativeError(requestId, "The backup file could not be read.");
+    }
+  }
+
+  private void closeBackupFolder(String requestId, JSONObject request, JSONObject payload) {
+    if (!hasNoPayload(request, payload)) {
+      sendNativeError(requestId, "That backup folder request is invalid.");
+      return;
+    }
+    closeBackupSession(false);
+    sendNativeResult(requestId, new JSONObject());
+  }
+
+  private boolean hasExactRequestShape(
+      JSONObject request, JSONObject payload, String... fields) {
+    if (request == null || payload == null || request.length() != 3
+        || payload.length() != fields.length) return false;
+    for (String field : fields) if (!payload.has(field) || payload.isNull(field)) return false;
+    return true;
+  }
+
+  private boolean hasNoPayload(JSONObject request, JSONObject payload) {
+    return request != null && request.length() == 2
+        && (!request.has("payload") || request.isNull("payload"))
+        && payload == null;
+  }
+
+  private static boolean isInteger(Object value) {
+    if (!(value instanceof Number)) return false;
+    if (value instanceof Byte || value instanceof Short
+        || value instanceof Integer || value instanceof Long) {
+      return ((Number) value).longValue() >= 0;
+    }
+    double number = ((Number) value).doubleValue();
+    return Double.isFinite(number) && number >= 0 && number <= 9_007_199_254_740_991d
+        && number == Math.rint(number);
+  }
+
+  private static boolean isIntRange(Object value, int minimum, int maximum) {
+    if (!isInteger(value)) return false;
+    long number = ((Number) value).longValue();
+    return number >= minimum && number <= maximum;
+  }
+
+  private static void skipFully(InputStream input, long bytes) throws IOException {
+    long remaining = bytes;
+    while (remaining > 0) {
+      long skipped = input.skip(remaining);
+      if (skipped <= 0) {
+        if (input.read() < 0) throw new IOException();
+        skipped = 1;
+      }
+      remaining -= skipped;
+    }
+  }
+
+  private void failBackupWrite(String requestId, String message, String status) {
+    abortBackupWrite();
+    notifyBackupStatus(status);
+    sendNativeError(requestId, message);
+  }
+
+  private void abortBackupWrite() {
+    Uri created = backupInFlightUri;
+    try {
+      if (backupOutput != null) backupOutput.close();
+    } catch (IOException ignored) {
+      // The created document is deleted below.
+    }
+    backupOutput = null;
+    if (created != null) {
+      try {
+        getContentResolver().delete(created, null, null);
+      } catch (RuntimeException ignored) {
+        // The current run's document is the only file eligible for deletion.
+      }
+    }
+    backupInFlightUri = null;
+    backupFolderPolicy.abortWrite();
+  }
+
+  private void clearBackupWriteState() {
+    try {
+      if (backupOutput != null) backupOutput.close();
+    } catch (IOException ignored) {
+      // The created document is deleted by the caller.
+    }
+    backupOutput = null;
+    backupInFlightUri = null;
+    backupFolderPolicy.abortWrite();
+  }
+
+  private void closeBackupSession(boolean reportPaused) {
+    boolean wasOpen = backupFolderPolicy.isSessionOpen();
+    abortBackupWrite();
+    backupFolderPolicy.closeForLifecycle();
+    backupTreeUri = null;
+    backupRefUris.clear();
+    if (wasOpen && reportPaused) notifyBackupStatus(NativeBackupFolderPolicy.PAUSED);
+  }
+
+  private void notifyBackupStatus(String code) {
+    if (webView == null || !isTrustedCurrentPage()
+        || !NativeBackupFolderPolicy.isStatusCode(code)) return;
+    String script;
+    switch (code) {
+      case NativeBackupFolderPolicy.PAUSED:
+        script = "window.__vellumBackupStatus&&window.__vellumBackupStatus('paused')";
+        break;
+      case NativeBackupFolderPolicy.FOLDER_LOST:
+        script = "window.__vellumBackupStatus&&window.__vellumBackupStatus('folder-lost')";
+        break;
+      case NativeBackupFolderPolicy.NO_SPACE:
+        script = "window.__vellumBackupStatus&&window.__vellumBackupStatus('no-space')";
+        break;
+      case NativeBackupFolderPolicy.CANCELLED:
+        script = "window.__vellumBackupStatus&&window.__vellumBackupStatus('cancelled')";
+        break;
+      case NativeBackupFolderPolicy.DONE:
+        script = "window.__vellumBackupStatus&&window.__vellumBackupStatus('done')";
+        break;
+      case NativeBackupFolderPolicy.NAME_CHANGED:
+        script = "window.__vellumBackupStatus&&window.__vellumBackupStatus('name-changed')";
+        break;
+      default:
+        return;
+    }
+    webView.evaluateJavascript(script, null);
   }
 
   private void readList(String requestId) {
@@ -1999,6 +2435,27 @@ public class MainActivity extends Activity {
   @Override
   protected void onActivityResult(int requestCode, int resultCode, Intent data) {
     super.onActivityResult(requestCode, resultCode, data);
+    if (requestCode == BACKUP_FOLDER_REQ) {
+      String requestId = pendingBackupFolderRequestId;
+      pendingBackupFolderRequestId = null;
+      pendingBackupFolderMode = null;
+      Uri selected = resultCode == RESULT_OK && data != null ? data.getData() : null;
+      if (requestId == null) {
+        closeBackupSession(false);
+        return;
+      }
+      if (selected == null || !DocumentsContract.isTreeUri(selected)
+          || !backupFolderPolicy.isSessionOpen()) {
+        closeBackupSession(false);
+        sendNativeResult(requestId, statusResult("picked", false));
+        notifyBackupStatus(NativeBackupFolderPolicy.CANCELLED);
+      } else {
+        backupTreeUri = selected;
+        backupRefUris.clear();
+        sendNativeResult(requestId, statusResult("picked", true));
+      }
+      return;
+    }
     if (requestCode == RESTORE_FILE_REQ) {
       Uri selected = resultCode == RESULT_OK && data != null ? data.getData() : null;
       String name = displayName(selected, "");
@@ -2144,13 +2601,23 @@ public class MainActivity extends Activity {
     if (recorderSession.isRecording()) stopRecording("interrupt");
     restorePickerArm.clear();
     attachmentPickerArm.clear();
+    backupFolderPolicy.clearArm();
     if (openTransfer != null) openTransfer.cancel();
     super.onPause();
   }
 
   @Override
+  protected void onStop() {
+    if (pendingBackupFolderRequestId == null) closeBackupSession(true);
+    super.onStop();
+  }
+
+  @Override
   protected void onDestroy() {
     restorePickerArm.clear();
+    closeBackupSession(false);
+    pendingBackupFolderRequestId = null;
+    pendingBackupFolderMode = null;
     dropOpenCopies();
     if (server != null) server.stop();
     if (migrationServer != null) migrationServer.stop();
