@@ -291,7 +291,7 @@ test("tampered bytes are rejected (header, salt, iv, body, tag)", async () => {
     await assert.rejects(() => decryptDataArchive(copy.buffer, "pw"), /damaged or incomplete/);
   }
   const magic = new Uint8Array(buf.slice(0));
-  magic[7] = "2".charCodeAt(0);
+  magic[7] = "3".charCodeAt(0);
   await assert.rejects(() => readEncryptedArchive(magic.buffer, "pw"), /not an encrypted Vellum archive/);
   assert.deepEqual(calls, []);
 });
