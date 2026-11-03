@@ -227,7 +227,10 @@ export function createBackupSetIdentity(random: RandomSource = systemRandom) {
   return { id: toHex(idBytes), salt: toBase64(saltBytes), idBytes, saltBytes };
 }
 
-export function createVellumFileName(random: RandomSource = systemRandom) {
+export function createVellumFileName(
+  random: RandomSource = systemRandom,
+  extension: "vea" | "vellum" = "vea",
+) {
   const bytes = new Uint8Array(16);
   random(bytes);
   let buffer = 0;
@@ -242,7 +245,7 @@ export function createVellumFileName(random: RandomSource = systemRandom) {
     }
   }
   if (bits > 0) encoded += "abcdefghijklmnopqrstuvwxyz234567"[(buffer << (5 - bits)) & 31];
-  return `vellum-${encoded}.vea`;
+  return `vellum-${encoded}.${extension}`;
 }
 
 export function isVellumFileName(value: unknown): value is string {
