@@ -9,7 +9,7 @@ import { isValidTimestamp } from "./detail-data.ts";
 import { callNative, hasNativeMessageBridge } from "./native-bridge.ts";
 import { given, joinName, surname } from "./format.ts";
 import { PATIENT_BUDGET_BYTES } from "./patient-budget.ts";
-import { validateBackupSet, type BackupSet } from "./attachment-archive.ts";
+import { BACKUP_SETTINGS_ERROR, validateBackupSet, type BackupSet } from "./attachment-archive.ts";
 import type { Attachment, Consult, Contact, Patient, Surgery } from "./types.ts";
 
 const COLUMNS = [
@@ -34,6 +34,14 @@ const COLUMNS = [
 
 const MAGIC = "VELLUM1";
 const DATA_MAGIC = "VELLUMD1";
+const DATA_MAGIC_V2 = "VELLUMD2";
+const DATA_V2_HEADER_BYTES = 40;
+export const DATA_V2_MIN_ITERATIONS = 600_000;
+export const DATA_V2_MAX_ITERATIONS = 2_000_000;
+export const MAX_DATA_FILE_BYTES = 64 * 1024 * 1024;
+const DATA_FILE_TOO_LARGE = "The backup is too large to save.";
+const DATA_OPEN_ERROR =
+  "That password did not open the file, or the file is damaged or incomplete.";
 const DATA_FORMAT_VERSION = 1;
 const MAX_INDEX_ENTRIES = 20_000;
 // A single file can never exceed the per-patient budget. This is a sanity ceiling for one packed
@@ -556,7 +564,7 @@ function toArrayBuffer(bytes: Uint8Array) {
   return copy;
 }
 
-async function deriveKey(password: string, salt: Uint8Array) {
+async function deriveKey(password: string, salt: Uint8Array, iterations = PBKDF2_ITERS) {
   const material = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(password),
@@ -565,7 +573,7 @@ async function deriveKey(password: string, salt: Uint8Array) {
     ["deriveKey"],
   );
   return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt: toArrayBuffer(salt), iterations: PBKDF2_ITERS, hash: "SHA-256" },
+    { name: "PBKDF2", salt: toArrayBuffer(salt), iterations, hash: "SHA-256" },
     material,
     { name: "AES-GCM", length: 256 },
     false,
@@ -733,11 +741,15 @@ export async function decryptArchive(buffer: ArrayBuffer, password: string) {
   }
 }
 
-export function isDataArchive(buffer: ArrayBuffer) {
+function hasMagic(buffer: ArrayBuffer, text: string) {
   const bytes = new Uint8Array(buffer);
-  const magic = new TextEncoder().encode(DATA_MAGIC);
+  const magic = new TextEncoder().encode(text);
   if (bytes.length < magic.length) return false;
   return magic.every((value, index) => bytes[index] === value);
+}
+
+export function isDataArchive(buffer: ArrayBuffer) {
+  return hasMagic(buffer, DATA_MAGIC) || hasMagic(buffer, DATA_MAGIC_V2);
 }
 
 // Data-only backup: all records, no attachment bytes, plus an attachment index.
@@ -750,7 +762,20 @@ export async function encryptDataArchive(
   onProgress?: (done: number, total: number) => void,
   backupSet?: BackupSet,
   attachmentIndex?: AttachmentIndexEntry[],
+  options: { format?: "d1" | "d2"; iterations?: number } = {},
 ) {
+  const v2 = options.format === "d2";
+  const iterations = options.iterations ?? DATA_V2_MIN_ITERATIONS;
+  if (
+    v2
+      ? !Number.isSafeInteger(iterations) ||
+        iterations < DATA_V2_MIN_ITERATIONS ||
+        iterations > DATA_V2_MAX_ITERATIONS
+      : options.iterations !== undefined ||
+        (options.format !== undefined && options.format !== "d1")
+  ) {
+    throw new Error(BACKUP_SETTINGS_ERROR);
+  }
   const parsedBackupSet = backupSet === undefined ? undefined : validateBackupSet(backupSet);
   const payload = JSON.stringify({
     format: "vellum-data",
@@ -762,15 +787,30 @@ export async function encryptDataArchive(
         : parseAttachmentIndex(attachmentIndex),
     ...(parsedBackupSet ? { backupSet: parsedBackupSet } : {}),
   });
-  const magic = new TextEncoder().encode(DATA_MAGIC);
+  const plainBytes = new TextEncoder().encode(payload);
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveKey(password, salt);
+  let magic: Uint8Array;
+  let aad: Uint8Array;
+  if (v2) {
+    if (DATA_V2_HEADER_BYTES + plainBytes.length + GCM_TAG_BYTES > MAX_DATA_FILE_BYTES) {
+      throw new Error(DATA_FILE_TOO_LARGE);
+    }
+    magic = new TextEncoder().encode(DATA_MAGIC_V2);
+    const iterationBytes = new Uint8Array(4);
+    new DataView(iterationBytes.buffer).setUint32(0, iterations, false);
+    aad = concatBytes([magic, iterationBytes]);
+    magic = aad;
+  } else {
+    magic = new TextEncoder().encode(DATA_MAGIC);
+    aad = magic;
+  }
+  const key = await deriveKey(password, salt, v2 ? iterations : PBKDF2_ITERS);
   const cipher = new Uint8Array(
     await crypto.subtle.encrypt(
-      { name: "AES-GCM", iv: toArrayBuffer(iv), additionalData: toArrayBuffer(magic) },
+      { name: "AES-GCM", iv: toArrayBuffer(iv), additionalData: toArrayBuffer(aad) },
       key,
-      new TextEncoder().encode(payload),
+      plainBytes,
     ),
   );
   return new Blob([concatBytes([magic, salt, iv, cipher])], { type: "application/octet-stream" });
@@ -782,15 +822,24 @@ export async function decryptDataArchive(
 ): Promise<{ csv: string; attachments: AttachmentIndexEntry[] }> {
   if (!isDataArchive(buffer)) throw new Error("This file is not a Vellum data backup.");
   const bytes = new Uint8Array(buffer);
-  const head = DATA_MAGIC.length;
+  const v2 = hasMagic(buffer, DATA_MAGIC_V2);
+  const head = v2 ? DATA_V2_HEADER_BYTES - 28 : DATA_MAGIC.length;
   if (bytes.length < head + 16 + 12 + GCM_TAG_BYTES) {
     throw new Error(
       "This backup file is incomplete. It may have been cut short when it was copied.",
     );
   }
+  let iterations = PBKDF2_ITERS;
+  if (v2) {
+    iterations = new DataView(buffer, 8, 4).getUint32(0, false);
+    // Refuse before any key derivation so a hostile file cannot make the phone spin.
+    if (iterations < DATA_V2_MIN_ITERATIONS || iterations > DATA_V2_MAX_ITERATIONS) {
+      throw new Error(DATA_OPEN_ERROR);
+    }
+  }
   let plain: string;
   try {
-    const key = await deriveKey(password, bytes.slice(head, head + 16));
+    const key = await deriveKey(password, bytes.slice(head, head + 16), iterations);
     plain = new TextDecoder().decode(
       await crypto.subtle.decrypt(
         {
@@ -803,7 +852,7 @@ export async function decryptDataArchive(
       ),
     );
   } catch {
-    throw new Error("That password did not open the file, or the file is damaged or incomplete.");
+    throw new Error(DATA_OPEN_ERROR);
   }
   let parsed: {
     format?: unknown;
