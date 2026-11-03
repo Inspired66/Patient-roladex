@@ -603,7 +603,10 @@ public class MainActivity extends Activity {
     pendingBackupFolderMode = mode;
     try {
       Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-      intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+      intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+      if (NativeBackupFolderPolicy.WRITE.equals(mode)) {
+        intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+      }
       startActivityForResult(intent, BACKUP_FOLDER_REQ);
     } catch (ActivityNotFoundException error) {
       pendingBackupFolderRequestId = null;
@@ -2438,6 +2441,7 @@ public class MainActivity extends Activity {
     if (requestCode == BACKUP_FOLDER_REQ) {
       String requestId = pendingBackupFolderRequestId;
       pendingBackupFolderRequestId = null;
+      String mode = pendingBackupFolderMode;
       pendingBackupFolderMode = null;
       Uri selected = resultCode == RESULT_OK && data != null ? data.getData() : null;
       if (requestId == null) {
@@ -2445,7 +2449,9 @@ public class MainActivity extends Activity {
         return;
       }
       if (selected == null || !DocumentsContract.isTreeUri(selected)
-          || !backupFolderPolicy.isSessionOpen()) {
+          || !backupFolderPolicy.isSessionOpen()
+          || (NativeBackupFolderPolicy.WRITE.equals(mode) && !backupFolderPolicy.isWriteSession())
+          || (NativeBackupFolderPolicy.READ.equals(mode) && !backupFolderPolicy.isReadSession())) {
         closeBackupSession(false);
         sendNativeResult(requestId, statusResult("picked", false));
         notifyBackupStatus(NativeBackupFolderPolicy.CANCELLED);
