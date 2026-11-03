@@ -11,6 +11,15 @@ import {
   readEncryptedArchive,
   type ArchiveFileStore,
 } from "./archive.ts";
+import {
+  BACKUP_FRAME_SIZE,
+  BACKUP_MAX_ITERATIONS,
+  BACKUP_MIN_ITERATIONS,
+  BACKUP_SET_ITERATIONS,
+  BACKUP_SETTINGS_ERROR,
+  validateBackupSet,
+  type BackupSet,
+} from "./attachment-archive.ts";
 import type { Contact, Patient } from "./types.ts";
 
 const SECRET = "PAYLOAD-BYTES-MARKER";
@@ -73,6 +82,45 @@ const contacts: Contact[] = [
 
 async function buffer(blob: Blob) {
   return await blob.arrayBuffer();
+}
+
+function validBackupSet(): BackupSet {
+  return {
+    id: "ab".repeat(16),
+    salt: "AQEBAQEBAQEBAQEBAQEBAQ==",
+    iterations: BACKUP_SET_ITERATIONS,
+    frameSize: BACKUP_FRAME_SIZE,
+    files: { "f-s": "vellum-aaaaaaaaaaaaaaaaaaaaaaaaaa.vea" },
+  };
+}
+
+async function encryptPayload(payload: unknown, password = "pw") {
+  const magic = new TextEncoder().encode("VELLUMD1");
+  const salt = new Uint8Array(16).fill(11);
+  const iv = new Uint8Array(12).fill(12);
+  const material = await crypto.subtle.importKey("raw", new TextEncoder().encode(password), "PBKDF2", false, [
+    "deriveKey",
+  ]);
+  const key = await crypto.subtle.deriveKey(
+    { name: "PBKDF2", hash: "SHA-256", salt, iterations: 120_000 },
+    material,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt"],
+  );
+  const encrypted = new Uint8Array(
+    await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv, additionalData: magic },
+      key,
+      new TextEncoder().encode(JSON.stringify(payload)),
+    ),
+  );
+  const result = new Uint8Array(magic.length + salt.length + iv.length + encrypted.length);
+  result.set(magic);
+  result.set(salt, magic.length);
+  result.set(iv, magic.length + salt.length);
+  result.set(encrypted, magic.length + salt.length + iv.length);
+  return result.buffer;
 }
 
 test("round trip: data identical, no attachment bytes, index correct", async () => {
@@ -147,6 +195,74 @@ test("empty store round trips with an empty index", async () => {
   const opened = await decryptDataArchive(buf, "pw");
   assert.deepEqual(opened.attachments, []);
   assert.throws(() => csvToDrafts(opened.csv), /no patients/);
+});
+
+test("optional backupSet round trips but stays outside the Part 1 data result", async () => {
+  const backupSet = validBackupSet();
+  const blob = await encryptDataArchive(patients(), contacts, "pw", store, undefined, backupSet);
+  const opened = await decryptDataArchive(await buffer(blob), "pw");
+  assert.equal(opened.csv, await patientsToCsv(patients(), contacts, store, { includeFiles: false }));
+  assert.equal(opened.attachments.length, 2);
+  assert.equal(Object.hasOwn(opened, "backupSet"), false);
+});
+
+test("old VELLUMD1 payloads without backupSet still import", async () => {
+  const blob = await encryptDataArchive(patients(), contacts, "pw", store);
+  const opened = await readEncryptedArchive(await buffer(blob), "pw");
+  assert.equal(opened.kind, "data");
+  assert.equal(opened.attachments.length, 2);
+});
+
+test("backupSet is rejected when malformed, oversized, out of range or named incorrectly", async () => {
+  const valid = validBackupSet();
+  const invalid = [
+    null,
+    { ...valid, id: "not-a-set-id" },
+    { ...valid, salt: "not-base64" },
+    { ...valid, salt: "AQ==" },
+    { ...valid, iterations: BACKUP_MIN_ITERATIONS - 1 },
+    { ...valid, iterations: BACKUP_MAX_ITERATIONS + 1 },
+    { ...valid, iterations: 3.5 },
+    { ...valid, frameSize: 32_768 },
+    { ...valid, files: [] },
+    { ...valid, files: { "f-s": "patient-name.vea" } },
+    { ...valid, files: { "f-s": "vellum-aaaaaaaaaaaaaaaaaaaaaaaaaa.vellum" } },
+    { ...valid, unexpected: true },
+    {
+      ...valid,
+      files: Object.fromEntries(
+        Array.from({ length: 20_001 }, (_, index) => [`file-${index}`, "vellum-aaaaaaaaaaaaaaaaaaaaaaaaaa.vea"]),
+      ),
+    },
+  ];
+  assert.throws(() => validateBackupSet(undefined), new RegExp(BACKUP_SETTINGS_ERROR));
+  for (const backupSet of invalid) {
+    assert.throws(() => validateBackupSet(backupSet), new RegExp(BACKUP_SETTINGS_ERROR));
+    const payload = {
+      format: "vellum-data",
+      version: 1,
+      csv: "kind,patient_id",
+      attachments: [],
+      backupSet,
+    };
+    const encrypted = await encryptPayload(payload);
+    await assert.rejects(() => decryptDataArchive(encrypted, "pw"), new RegExp(BACKUP_SETTINGS_ERROR));
+  }
+});
+
+test("new payload with a backupSet keeps unknown top-level extensions ignorable", async () => {
+  const payload = {
+    format: "vellum-data",
+    version: 1,
+    csv: "kind,patient_id",
+    attachments: [],
+    backupSet: validBackupSet(),
+    futureField: { ignored: true },
+  };
+  const opened = await readEncryptedArchive(await encryptPayload(payload), "pw");
+  assert.equal(opened.kind, "data");
+  assert.equal(opened.csv, payload.csv);
+  assert.deepEqual(opened.attachments, []);
 });
 
 test("wrong password gives a clear error and writes nothing", async () => {

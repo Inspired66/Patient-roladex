@@ -9,6 +9,7 @@ import { isValidTimestamp } from "./detail-data.ts";
 import { callNative, hasNativeMessageBridge } from "./native-bridge.ts";
 import { given, joinName, surname } from "./format.ts";
 import { PATIENT_BUDGET_BYTES } from "./patient-budget.ts";
+import { validateBackupSet, type BackupSet } from "./attachment-archive.ts";
 import type { Attachment, Consult, Contact, Patient, Surgery } from "./types.ts";
 
 const COLUMNS = [
@@ -748,12 +749,15 @@ export async function encryptDataArchive(
   password: string,
   fileStore = defaultFileStore,
   onProgress?: (done: number, total: number) => void,
+  backupSet?: BackupSet,
 ) {
+  const parsedBackupSet = backupSet === undefined ? undefined : validateBackupSet(backupSet);
   const payload = JSON.stringify({
     format: "vellum-data",
     version: DATA_FORMAT_VERSION,
     csv: await patientsToCsv(patients, contacts, fileStore, { includeFiles: false }),
     attachments: await buildAttachmentIndex(patients, fileStore, onProgress),
+    ...(parsedBackupSet ? { backupSet: parsedBackupSet } : {}),
   });
   const magic = new TextEncoder().encode(DATA_MAGIC);
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -798,7 +802,14 @@ export async function decryptDataArchive(
   } catch {
     throw new Error("That password did not open the file, or the file is damaged or incomplete.");
   }
-  let parsed: { format?: unknown; version?: unknown; csv?: unknown; attachments?: unknown };
+  let parsed: {
+    format?: unknown;
+    version?: unknown;
+    csv?: unknown;
+    attachments?: unknown;
+    backupSet?: unknown;
+    [key: string]: unknown;
+  };
   try {
     parsed = JSON.parse(plain);
   } catch {
@@ -810,6 +821,7 @@ export async function decryptDataArchive(
   if (typeof parsed.version !== "number" || parsed.version > DATA_FORMAT_VERSION) {
     throw new Error("This backup was made by a newer version of Vellum.");
   }
+  if (Object.hasOwn(parsed, "backupSet")) validateBackupSet(parsed.backupSet);
   return { csv: parsed.csv, attachments: parseAttachmentIndex(parsed.attachments) };
 }
 
