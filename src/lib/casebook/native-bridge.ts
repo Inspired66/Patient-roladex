@@ -1,7 +1,4 @@
-import {
-  BACKUP_NAME_PATTERN,
-  MAX_BACKUP_FILE_BYTES,
-} from "./attachment-archive.ts";
+import { BACKUP_NAME_PATTERN, MAX_BACKUP_FILE_BYTES } from "./attachment-archive.ts";
 
 type NativeRequest = {
   id: string;
@@ -30,12 +27,7 @@ type NativeWindow = Window & {
 
 export type BackupFolderMode = "write" | "read";
 export type BackupFolderStatusCode =
-  | "paused"
-  | "folder-lost"
-  | "no-space"
-  | "cancelled"
-  | "done"
-  | "name-changed";
+  "paused" | "folder-lost" | "no-space" | "cancelled" | "done" | "name-changed";
 
 export type BackupFolderListEntry = { ref: number; size: number };
 export type BackupFolderPage = {
@@ -118,7 +110,9 @@ export function callNative<T>(action: string, payload?: unknown, timeoutMs = 120
     } catch (error) {
       window.clearTimeout(timer);
       pending.delete(id);
-      reject(error instanceof Error ? error : new Error("The phone could not complete that action."));
+      reject(
+        error instanceof Error ? error : new Error("The phone could not complete that action."),
+      );
     }
   });
 }
@@ -143,11 +137,7 @@ function validateBackupChunk(data: unknown) {
   if (typeof data !== "string" || data.length === 0) invalid(BACKUP_CHUNK_INVALID);
   try {
     const binary = atob(data);
-    if (
-      binary.length === 0 ||
-      binary.length > BACKUP_CHUNK_BYTES ||
-      btoa(binary) !== data
-    ) {
+    if (binary.length === 0 || binary.length > BACKUP_CHUNK_BYTES || btoa(binary) !== data) {
       invalid(BACKUP_CHUNK_INVALID);
     }
     return data;

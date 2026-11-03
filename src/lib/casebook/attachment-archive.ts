@@ -9,7 +9,8 @@ export const MAX_BACKUP_FILE_BYTES = 31 * 1024 * 1024;
 export const MAX_BACKUP_SET_FILES = 20_000;
 export const BACKUP_NAME_PATTERN = /^vellum-[a-z2-7]{26}\.(?:vea|vellum)$/;
 
-export const BACKUP_FILE_ERROR = "That password did not open the file, or the file is damaged or incomplete.";
+export const BACKUP_FILE_ERROR =
+  "That password did not open the file, or the file is damaged or incomplete.";
 export const BACKUP_SETTINGS_ERROR = "The backup settings are invalid.";
 
 const HEADER_BYTES = 50;
@@ -138,7 +139,12 @@ function readU16(bytes: Uint8Array) {
 }
 
 function writeU32(value: number) {
-  return new Uint8Array([(value >>> 24) & 0xff, (value >>> 16) & 0xff, (value >>> 8) & 0xff, value & 0xff]);
+  return new Uint8Array([
+    (value >>> 24) & 0xff,
+    (value >>> 16) & 0xff,
+    (value >>> 8) & 0xff,
+    value & 0xff,
+  ]);
 }
 
 function readU16At(bytes: Uint8Array, offset: number) {
@@ -190,12 +196,20 @@ export async function deriveBackupMasterKey(
   iterations = BACKUP_SET_ITERATIONS,
 ): Promise<CryptoKey> {
   checkIterations(iterations);
-  if (!(salt instanceof Uint8Array) || salt.byteLength !== SALT_BYTES || typeof password !== "string") {
+  if (
+    !(salt instanceof Uint8Array) ||
+    salt.byteLength !== SALT_BYTES ||
+    typeof password !== "string"
+  ) {
     settingsFail();
   }
-  const material = await crypto.subtle.importKey("raw", arrayBuffer(encoder.encode(password)), "PBKDF2", false, [
-    "deriveBits",
-  ]);
+  const material = await crypto.subtle.importKey(
+    "raw",
+    arrayBuffer(encoder.encode(password)),
+    "PBKDF2",
+    false,
+    ["deriveBits"],
+  );
   const raw = await crypto.subtle.deriveBits(
     { name: "PBKDF2", hash: "SHA-256", salt: arrayBuffer(salt), iterations },
     material,

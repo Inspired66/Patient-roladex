@@ -27,7 +27,11 @@ const PASSWORD = "test password";
 let key: CryptoKey;
 
 before(async () => {
-  key = await deriveBackupMasterKey(PASSWORD, Uint8Array.from({ length: 16 }, (_, i) => i + 32), TEST_ITERATIONS);
+  key = await deriveBackupMasterKey(
+    PASSWORD,
+    Uint8Array.from({ length: 16 }, (_, i) => i + 32),
+    TEST_ITERATIONS,
+  );
 });
 
 function meta(size: number, patch: Partial<AttachmentSealMeta> = {}): AttachmentSealMeta {
@@ -49,8 +53,9 @@ function arrayBuffer(bytes: Uint8Array) {
 }
 
 async function digest(bytes: Uint8Array) {
-  return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", arrayBuffer(bytes))), (byte) =>
-    byte.toString(16).padStart(2, "0"),
+  return Array.from(
+    new Uint8Array(await crypto.subtle.digest("SHA-256", arrayBuffer(bytes))),
+    (byte) => byte.toString(16).padStart(2, "0"),
   ).join("");
 }
 
@@ -94,18 +99,17 @@ function concat(frames: Uint8Array[]) {
   return result;
 }
 
-async function openFrames(frames: Uint8Array[], expected: AttachmentSealMeta, master = key, setId = SET_ID) {
+async function openFrames(
+  frames: Uint8Array[],
+  expected: AttachmentSealMeta,
+  master = key,
+  setId = SET_ID,
+) {
   const source = reader(frames);
   const delivered: Uint8Array[] = [];
-  const blob = await openVellumAttachment(
-    source.read,
-    master,
-    setId,
-    expected,
-    (frame) => {
-      delivered.push(frame);
-    },
-  );
+  const blob = await openVellumAttachment(source.read, master, setId, expected, (frame) => {
+    delivered.push(frame);
+  });
   return { blob, delivered, source };
 }
 
@@ -139,8 +143,15 @@ test("30 MiB round trip streams one frame callback at a time", async () => {
 test("wrong password and wrong set id use the fixed generic file error", async () => {
   const bytes = Uint8Array.of(1, 2, 3);
   const sealed = await seal(bytes);
-  const wrongKey = await deriveBackupMasterKey("wrong password", Uint8Array.from({ length: 16 }, (_, i) => i + 32), TEST_ITERATIONS);
-  await assert.rejects(() => openFrames(sealed.frames, meta(3), wrongKey), new RegExp(BACKUP_FILE_ERROR));
+  const wrongKey = await deriveBackupMasterKey(
+    "wrong password",
+    Uint8Array.from({ length: 16 }, (_, i) => i + 32),
+    TEST_ITERATIONS,
+  );
+  await assert.rejects(
+    () => openFrames(sealed.frames, meta(3), wrongKey),
+    new RegExp(BACKUP_FILE_ERROR),
+  );
   await assert.rejects(
     () => openFrames(sealed.frames, meta(3), key, "100102030405060708090a0b0c0d0e0f"),
     new RegExp(BACKUP_FILE_ERROR),
@@ -155,7 +166,10 @@ test("wrong PBKDF2 iteration count cannot open the attachment", async () => {
     Uint8Array.from({ length: 16 }, (_, i) => i + 32),
     TEST_ITERATIONS + 1,
   );
-  await assert.rejects(() => openFrames(sealed.frames, meta(3), otherKey), new RegExp(BACKUP_FILE_ERROR));
+  await assert.rejects(
+    () => openFrames(sealed.frames, meta(3), otherKey),
+    new RegExp(BACKUP_FILE_ERROR),
+  );
   await assert.rejects(
     () => deriveBackupMasterKey(PASSWORD, FILE_SALT, BACKUP_MIN_ITERATIONS - 1),
     new RegExp(BACKUP_SETTINGS_ERROR),
@@ -200,18 +214,34 @@ test("truncation, frame reordering, duplication, extension and a missing final f
   for (const frame of frames) offsets.push(offsets[offsets.length - 1] + frame.length);
 
   const boundaryTruncation = complete.slice(0, offsets[offsets.length - 2]);
-  await assert.rejects(() => openVellumAttachment(
-    async (offset, length) =>
-      arrayBuffer(boundaryTruncation.slice(offset, Math.min(boundaryTruncation.length, offset + length))),
-    key, SET_ID, value,
-  ), new RegExp(BACKUP_FILE_ERROR));
+  await assert.rejects(
+    () =>
+      openVellumAttachment(
+        async (offset, length) =>
+          arrayBuffer(
+            boundaryTruncation.slice(offset, Math.min(boundaryTruncation.length, offset + length)),
+          ),
+        key,
+        SET_ID,
+        value,
+      ),
+    new RegExp(BACKUP_FILE_ERROR),
+  );
 
   const midFrameTruncation = complete.slice(0, offsets[2] + 4);
-  await assert.rejects(() => openVellumAttachment(
-    async (offset, length) =>
-      arrayBuffer(midFrameTruncation.slice(offset, Math.min(midFrameTruncation.length, offset + length))),
-    key, SET_ID, value,
-  ), new RegExp(BACKUP_FILE_ERROR));
+  await assert.rejects(
+    () =>
+      openVellumAttachment(
+        async (offset, length) =>
+          arrayBuffer(
+            midFrameTruncation.slice(offset, Math.min(midFrameTruncation.length, offset + length)),
+          ),
+        key,
+        SET_ID,
+        value,
+      ),
+    new RegExp(BACKUP_FILE_ERROR),
+  );
 
   const reordered = frames.map((frame) => frame.slice());
   [reordered[2], reordered[3]] = [reordered[3], reordered[2]];
@@ -221,7 +251,10 @@ test("truncation, frame reordering, duplication, extension and a missing final f
   duplicated[3] = duplicated[2].slice();
   await assert.rejects(() => openFrames(duplicated, value), new RegExp(BACKUP_FILE_ERROR));
 
-  await assert.rejects(() => openFrames([...frames, Uint8Array.of(1)], value), new RegExp(BACKUP_FILE_ERROR));
+  await assert.rejects(
+    () => openFrames([...frames, Uint8Array.of(1)], value),
+    new RegExp(BACKUP_FILE_ERROR),
+  );
   await assert.rejects(() => openFrames(frames.slice(0, -1), value), new RegExp(BACKUP_FILE_ERROR));
 });
 
@@ -248,7 +281,9 @@ test("sealed meta must match each identity field and file size", async () => {
 
 test("known answer matches the committed fixture", async () => {
   const plaintext = new TextEncoder().encode("Vellum attachment frame fixture.");
-  const fixture = (await readFile(new URL("./attachment-archive.fixture.hex", import.meta.url), "utf8")).trim();
+  const fixture = (
+    await readFile(new URL("./attachment-archive.fixture.hex", import.meta.url), "utf8")
+  ).trim();
   const fixedKey = await deriveBackupMasterKey(
     "fixture password",
     Uint8Array.from({ length: 16 }, (_, index) => index + 32),
@@ -269,7 +304,10 @@ test("known answer matches the committed fixture", async () => {
 });
 
 test("name generation is injectable, valid and collision-free for 10,000 draws", () => {
-  assert.equal(createVellumFileName((bytes) => bytes.fill(0)), "vellum-aaaaaaaaaaaaaaaaaaaaaaaaaa.vea");
+  assert.equal(
+    createVellumFileName((bytes) => bytes.fill(0)),
+    "vellum-aaaaaaaaaaaaaaaaaaaaaaaaaa.vea",
+  );
   assert.equal(MIN_FOLDER_BACKUP_PASSWORD_LENGTH, 12);
   let counter = 0;
   const names = new Set<string>();
@@ -323,7 +361,12 @@ test("backup-set validation accepts only bounded well-formed values", () => {
     { ...valid, frameSize: 32_768 },
     { ...valid, files: { attachment: "patient-name.vea" } },
     { ...valid, extra: true },
-    { ...valid, files: Object.fromEntries(Array.from({ length: 20_001 }, (_, index) => [`id-${index}`, name])) },
+    {
+      ...valid,
+      files: Object.fromEntries(
+        Array.from({ length: 20_001 }, (_, index) => [`id-${index}`, name]),
+      ),
+    },
   ]) {
     assert.throws(() => validateBackupSet(bad), new RegExp(BACKUP_SETTINGS_ERROR));
   }

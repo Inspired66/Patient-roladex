@@ -54,16 +54,19 @@ test("backup folder wrappers send exact action names and payloads", async () => 
       "closeBackupFolder",
     ],
   );
-  assert.deepEqual(calls.map(({ payload }) => payload), [
-    { mode: "write" },
-    { cursor: 0 },
-    { kind: "attachment", name: `vellum-${"a".repeat(26)}.vea`, size: 12 },
-    { seq: 0, data: btoa("hello") },
-    undefined,
-    undefined,
-    { ref: 1, offset: 0, length: 5 },
-    undefined,
-  ]);
+  assert.deepEqual(
+    calls.map(({ payload }) => payload),
+    [
+      { mode: "write" },
+      { cursor: 0 },
+      { kind: "attachment", name: `vellum-${"a".repeat(26)}.vea`, size: 12 },
+      { seq: 0, data: btoa("hello") },
+      undefined,
+      undefined,
+      { ref: 1, offset: 0, length: 5 },
+      undefined,
+    ],
+  );
 });
 
 test("folder status callback accepts only the fixed status codes", () => {
@@ -145,7 +148,10 @@ test("bad input is refused locally without calling the bridge", async () => {
     "That backup chunk is invalid.",
   );
   await expectInvalid(client.readChunk(0, 0, 1), "That backup read request is invalid.");
-  await expectInvalid(client.readChunk(1, 0, 96 * 1024 + 1), "That backup read request is invalid.");
+  await expectInvalid(
+    client.readChunk(1, 0, 96 * 1024 + 1),
+    "That backup read request is invalid.",
+  );
 });
 
 test("native fixed failures are surfaced without rewriting their messages", async () => {
