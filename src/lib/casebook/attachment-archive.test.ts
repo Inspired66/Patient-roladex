@@ -10,7 +10,9 @@ import {
   BACKUP_SETTINGS_ERROR,
   MAX_BACKUP_FILE_BYTES,
   MIN_FOLDER_BACKUP_PASSWORD_LENGTH,
+  BACKUP_CHUNK_BYTES,
   createBackupSetIdentity,
+  createSealedChunker,
   createVellumFileName,
   deriveBackupMasterKey,
   isVellumFileName,
@@ -406,4 +408,79 @@ test("sealedSize rejects the same sizes as the sealer", () => {
     assert.throws(() => sealedSize(meta(size)), { message: BACKUP_FILE_ERROR });
   }
   assert.throws(() => sealedSize(meta(5, { sha256: "xyz" })), { message: BACKUP_FILE_ERROR });
+});
+
+async function chunked(frameSizes: number[], maxBytes?: number) {
+  const input: Uint8Array[] = frameSizes.map((size, n) =>
+    Uint8Array.from({ length: size }, (_, i) => (i * 7 + n * 13) & 0xff),
+  );
+  const chunks: Uint8Array[] = [];
+  let sizes: number[] = [];
+  const chunker = createSealedChunker((chunk) => {
+    sizes.push(chunk.byteLength);
+    chunks.push(chunk.slice());
+  }, maxBytes);
+  for (const frame of input) await chunker.push(frame);
+  await chunker.flush();
+  sizes = sizes.slice();
+  const join = (parts: Uint8Array[]) => {
+    const out = new Uint8Array(parts.reduce((sum, part) => sum + part.byteLength, 0));
+    let offset = 0;
+    for (const part of parts) {
+      out.set(part, offset);
+      offset += part.byteLength;
+    }
+    return out;
+  };
+  return { sizes, out: join(chunks), expected: join(input) };
+}
+
+test("chunker keeps bytes identical and never exceeds 96 KiB", async () => {
+  const result = await chunked([50, 65_552, 65_536 + 16, 1, 65_552, 100_000, 3]);
+  assert.deepEqual(result.out, result.expected);
+  assert.ok(result.sizes.every((size) => size >= 1 && size <= BACKUP_CHUNK_BYTES));
+  assert.ok(result.sizes.slice(0, -1).every((size) => size === BACKUP_CHUNK_BYTES));
+});
+
+test("chunker handles empty input and exact multiples", async () => {
+  const empty = await chunked([]);
+  assert.deepEqual(empty.sizes, []);
+  assert.equal(empty.out.byteLength, 0);
+  const emptyFrame = await chunked([0, 0]);
+  assert.deepEqual(emptyFrame.sizes, []);
+  const exact = await chunked([BACKUP_CHUNK_BYTES, BACKUP_CHUNK_BYTES / 2, BACKUP_CHUNK_BYTES / 2]);
+  assert.deepEqual(exact.sizes, [BACKUP_CHUNK_BYTES, BACKUP_CHUNK_BYTES]);
+  assert.deepEqual(exact.out, exact.expected);
+});
+
+test("chunker rejects bad chunk sizes", () => {
+  for (const size of [0, -1, 1.5, BACKUP_CHUNK_BYTES + 1]) {
+    assert.throws(() => createSealedChunker(() => {}, size), { message: BACKUP_FILE_ERROR });
+  }
+});
+
+test("chunker holds at most one chunk and one frame while a file streams", async () => {
+  const bytes = new Uint8Array(2 * 1024 * 1024);
+  for (let index = 0; index < bytes.length; index += 4093) bytes[index] = index & 0xff;
+  const value = meta(bytes.length, { sha256: await digest(bytes) });
+  let pending = 0;
+  let peakPending = 0;
+  let total = 0;
+  let chunks = 0;
+  const chunker = createSealedChunker(async (chunk) => {
+    pending += chunk.byteLength;
+    peakPending = Math.max(peakPending, pending);
+    assert.ok(chunk.byteLength <= BACKUP_CHUNK_BYTES);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    total += chunk.byteLength;
+    chunks += 1;
+    pending -= chunk.byteLength;
+  });
+  await sealVellumAttachment(new Blob([arrayBuffer(bytes)]), key, SET_ID, FILE_SALT, value, (f) =>
+    chunker.push(f),
+  );
+  await chunker.flush();
+  assert.equal(total, sealedSize(value));
+  assert.ok(peakPending <= BACKUP_CHUNK_BYTES);
+  assert.ok(chunks >= Math.ceil(total / BACKUP_CHUNK_BYTES));
 });

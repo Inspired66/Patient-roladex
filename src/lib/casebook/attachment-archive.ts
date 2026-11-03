@@ -6,6 +6,7 @@ export const BACKUP_MAX_ITERATIONS = 5_000_000;
 export const BACKUP_SET_ITERATIONS = 600_000;
 export const MIN_FOLDER_BACKUP_PASSWORD_LENGTH = 12;
 export const MAX_BACKUP_FILE_BYTES = 31 * 1024 * 1024;
+export const BACKUP_CHUNK_BYTES = 96 * 1024;
 export const MAX_BACKUP_SET_FILES = 20_000;
 export const BACKUP_NAME_PATTERN = /^vellum-[a-z2-7]{26}\.(?:vea|vellum)$/;
 
@@ -309,6 +310,44 @@ export function sealedSize(meta: AttachmentSealMeta) {
   const frameCount = Math.ceil(meta.size / BACKUP_FRAME_SIZE);
   const metaPlain = 2 + encoder.encode(metaJson(meta)).byteLength;
   return HEADER_BYTES + 2 + metaPlain + GCM_TAG_BYTES + meta.size + frameCount * GCM_TAG_BYTES;
+}
+
+export type SealedChunker = {
+  push: FrameCallback;
+  flush: () => Promise<void>;
+};
+
+// Regroups sealed frames into chunks of at most `maxBytes`. One fixed buffer is reused, so the
+// emitted view is only valid until `emit` resolves; `emit` must not keep it.
+export function createSealedChunker(
+  emit: FrameCallback,
+  maxBytes: number = BACKUP_CHUNK_BYTES,
+): SealedChunker {
+  if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > BACKUP_CHUNK_BYTES) {
+    fail();
+  }
+  const buffer = new Uint8Array(maxBytes);
+  let used = 0;
+  const drain = async () => {
+    const view = buffer.subarray(0, used);
+    used = 0;
+    await emit(view);
+  };
+  return {
+    async push(frame) {
+      let offset = 0;
+      while (offset < frame.byteLength) {
+        const take = Math.min(maxBytes - used, frame.byteLength - offset);
+        buffer.set(frame.subarray(offset, offset + take), used);
+        used += take;
+        offset += take;
+        if (used === maxBytes) await drain();
+      }
+    },
+    async flush() {
+      if (used > 0) await drain();
+    },
+  };
 }
 
 async function sealVellumAttachmentImpl(
