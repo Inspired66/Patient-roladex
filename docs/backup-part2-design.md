@@ -113,6 +113,22 @@ Web orchestrator (new `backup-folder.ts`, chunk 4g) plus native writer (policy i
 
 Temp files: **none**. Frames are written straight to the document stream (no cache buffer), so there is nothing to sweep for the write path.
 
+### 5.1 Implemented run (4g-2, simplified; overrides steps 3-5 and 7-9 above)
+
+`runFolderBackup` in `src/lib/casebook/folder-backup.ts` (library only; UI comes in 4g-3):
+
+1. Refuse an empty casebook and a password under 12 characters, before the folder is touched.
+2. `arm("write")` first (the folder pick, so keep-screen-on is already active during hashing and key derivation). Cancelling in the picker ends the run quietly with no message and nothing recorded.
+3. `buildAttachmentIndex` once; derive the attachment master key once at 600,000 iterations. **Not restored** rows keep their stored fingerprint in the index, get no `.vea` file, and are not in `backupSet.files`. Nothing is ever invented.
+4. For each other attachment, in order: a new random `.vea` name, then begin, chunks (at most 96 KiB each, only one chunk held), finish. The abort signal and native status codes are checked between steps.
+5. Build the VELLUMD2 data file with the precomputed index and a `backupSet` listing exactly the `.vea` files written. Decrypt it in memory and check patient count, attachment count and that `backupSet.files` equals what was written. A mismatch fails closed before anything more is written.
+6. Write the data file last (`.vellum`), then record the date of the last folder backup (`vellum-last-folder-backup`, a plain date only). The date is never set on failure or cancel.
+7. `close()` always runs, on success, error and cancel.
+
+**Where a failure leaves the folder.** Nothing is deleted and nothing existing is changed. A run that stops before step 6 leaves the `.vea` files already written as unused orphans and writes no data file, so the previous data file (if any) still matches its own files. The in-flight file is aborted and removed by native. A stop on `paused`, `folder-lost`, `no-space`, `cancelled` or `name-changed` ends the run with a fixed message for each.
+
+**Every run writes a complete new set**: new set id, new salt, every attachment sealed again with a new name. There are no incremental runs, no folder scan and no resume yet, so the folder grows with each run until the tidy-up task (D6).
+
 ## 6. Restore flow
 
 Orchestrator: extend `restore-flow.ts` (chunk 4i).
