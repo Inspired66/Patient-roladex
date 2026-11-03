@@ -198,13 +198,18 @@ test("empty store round trips with an empty index", async () => {
   assert.throws(() => csvToDrafts(opened.csv), /no patients/);
 });
 
-test("optional backupSet round trips but stays outside the Part 1 data result", async () => {
+test("optional backupSet round trips and is returned only when present", async () => {
   const backupSet = validBackupSet();
   const blob = await encryptDataArchive(patients(), contacts, "pw", store, undefined, backupSet);
   const opened = await decryptDataArchive(await buffer(blob), "pw");
   assert.equal(opened.csv, await patientsToCsv(patients(), contacts, store, { includeFiles: false }));
   assert.equal(opened.attachments.length, 2);
-  assert.equal(Object.hasOwn(opened, "backupSet"), false);
+  assert.deepEqual(opened.backupSet, backupSet);
+  const plain = await decryptDataArchive(
+    await buffer(await encryptDataArchive(patients(), contacts, "pw", store)),
+    "pw",
+  );
+  assert.equal(Object.hasOwn(plain, "backupSet"), false);
 });
 
 test("old VELLUMD1 payloads without backupSet still import", async () => {

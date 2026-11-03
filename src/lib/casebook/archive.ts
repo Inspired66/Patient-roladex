@@ -819,7 +819,7 @@ export async function encryptDataArchive(
 export async function decryptDataArchive(
   buffer: ArrayBuffer,
   password: string,
-): Promise<{ csv: string; attachments: AttachmentIndexEntry[] }> {
+): Promise<{ csv: string; attachments: AttachmentIndexEntry[]; backupSet?: BackupSet }> {
   if (!isDataArchive(buffer)) throw new Error("This file is not a Vellum data backup.");
   const bytes = new Uint8Array(buffer);
   const v2 = hasMagic(buffer, DATA_MAGIC_V2);
@@ -873,8 +873,14 @@ export async function decryptDataArchive(
   if (typeof parsed.version !== "number" || parsed.version > DATA_FORMAT_VERSION) {
     throw new Error("This backup was made by a newer version of Vellum.");
   }
-  if (Object.hasOwn(parsed, "backupSet")) validateBackupSet(parsed.backupSet);
-  return { csv: parsed.csv, attachments: parseAttachmentIndex(parsed.attachments) };
+  const backupSet = Object.hasOwn(parsed, "backupSet")
+    ? validateBackupSet(parsed.backupSet)
+    : undefined;
+  return {
+    csv: parsed.csv,
+    attachments: parseAttachmentIndex(parsed.attachments),
+    ...(backupSet ? { backupSet } : {}),
+  };
 }
 
 // Opens either archive kind. Old VELLUM1 archives carry attachments inside the CSV and no index.

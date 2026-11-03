@@ -1,17 +1,37 @@
 import {
   BACKUP_CHUNK_BYTES,
+  BACKUP_SET_ITERATIONS,
+  MIN_FOLDER_BACKUP_PASSWORD_LENGTH,
+  createBackupSetIdentity,
   createSealedChunker,
+  createVellumFileName,
+  deriveBackupMasterKey,
   sealedSize,
   sealVellumAttachment,
   type AttachmentSealMeta,
+  type BackupSet,
 } from "./attachment-archive.ts";
-import type { createBackupFolderClient } from "./native-bridge.ts";
+import {
+  buildAttachmentIndex,
+  csvToDrafts,
+  decryptDataArchive,
+  encryptDataArchive,
+  type ArchiveFileStore,
+} from "./archive.ts";
+import { getBlob } from "./files.ts";
+import { countAttachments } from "./data-backup.ts";
+import {
+  createBackupFolderClient as makeBackupFolderClient,
+  subscribeBackupFolderStatus,
+  type BackupFolderStatusCode,
+} from "./native-bridge.ts";
+import type { Contact, Patient } from "./types.ts";
 
 export const FOLDER_BACKUP_FILE_ERROR = "The backup file could not be written.";
 export const FOLDER_BACKUP_CANCELLED = "The backup was cancelled.";
 
 export type FolderFileWriter = Pick<
-  ReturnType<typeof createBackupFolderClient>,
+  ReturnType<typeof makeBackupFolderClient>,
   "beginFile" | "writeChunk" | "finishFile" | "abortFile"
 >;
 
@@ -111,4 +131,202 @@ export async function writeDataFile(
     },
     signal,
   );
+}
+
+// Only a calendar date is stored: no names, ids, counts or folder details.
+export const LAST_FOLDER_BACKUP_KEY = "vellum-last-folder-backup";
+type DateStorage = Pick<Storage, "getItem" | "setItem">;
+
+function browserStorage(): DateStorage | undefined {
+  return typeof localStorage === "undefined" ? undefined : localStorage;
+}
+
+export function readLastFolderBackup(storage: DateStorage | undefined = browserStorage()) {
+  try {
+    const value = storage?.getItem(LAST_FOLDER_BACKUP_KEY) ?? "";
+    return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeLastFolderBackup(
+  date: string,
+  storage: DateStorage | undefined = browserStorage(),
+) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return;
+  try {
+    storage?.setItem(LAST_FOLDER_BACKUP_KEY, date);
+  } catch {
+    // The backup succeeded; failing to note the date must not turn that into an error.
+  }
+}
+
+export const FOLDER_BACKUP_EMPTY = "There is nothing to back up yet. Add a patient first.";
+export const FOLDER_BACKUP_SHORT_PASSWORD = `Use at least ${MIN_FOLDER_BACKUP_PASSWORD_LENGTH} characters.`;
+export const FOLDER_BACKUP_VERIFY_ERROR =
+  "The backup did not pass its check, so the data file was not saved.";
+
+const STOP_MESSAGES: Record<Exclude<BackupFolderStatusCode, "done">, string> = {
+  paused: "The backup stopped because Vellum was not on screen. Keep Vellum open and try again.",
+  "folder-lost": "The backup folder is no longer available.",
+  "no-space": "There is not enough space in the folder.",
+  cancelled: FOLDER_BACKUP_CANCELLED,
+  "name-changed": "The folder app renamed a backup file, so the backup was stopped.",
+};
+
+export type FolderBackupProgress = {
+  phase: "index" | "files" | "data";
+  done: number;
+  total: number;
+};
+
+export type FolderBackupDeps = {
+  client: Pick<ReturnType<typeof makeBackupFolderClient>, keyof FolderFileWriter | "arm" | "close">;
+  fileStore?: ArchiveFileStore;
+  signal?: AbortSignal;
+  onProgress?: (progress: FolderBackupProgress) => void;
+  today: string;
+  storage?: DateStorage;
+  subscribe?: (handler: (code: BackupFolderStatusCode) => void) => () => void;
+};
+
+export type FolderBackupResult = { outcome: "cancelled" } | { outcome: "done" };
+
+// Writes one new .vea per attachment, then the data file last. Nothing is ever deleted: a
+// stopped run leaves earlier .vea files behind as unused orphans and writes no data file.
+export async function runFolderBackup(
+  patients: Patient[],
+  contacts: Contact[],
+  password: string,
+  deps: FolderBackupDeps,
+): Promise<FolderBackupResult> {
+  if (patients.length === 0) throw new Error(FOLDER_BACKUP_EMPTY);
+  if (password.length < MIN_FOLDER_BACKUP_PASSWORD_LENGTH) {
+    throw new Error(FOLDER_BACKUP_SHORT_PASSWORD);
+  }
+  const { client, onProgress } = deps;
+  const store = deps.fileStore ?? { getBlob };
+  const internal = new AbortController();
+  let stop: Exclude<BackupFolderStatusCode, "done"> | null = null;
+  const unsubscribe = (deps.subscribe ?? subscribeBackupFolderStatus)((code) => {
+    if (code === "done" || stop) return;
+    stop = code;
+    internal.abort();
+  });
+  const onAbort = () => internal.abort();
+  deps.signal?.addEventListener("abort", onAbort);
+  if (deps.signal?.aborted) internal.abort();
+  const signal = internal.signal;
+  const checkStopped = () => {
+    if (signal.aborted) throw new Error(stop ? STOP_MESSAGES[stop] : FOLDER_BACKUP_CANCELLED);
+  };
+
+  try {
+    // The folder is picked first so the screen stays on during hashing and key derivation.
+    const picked = await client.arm("write");
+    if (!picked?.picked) return { outcome: "cancelled" };
+    checkStopped();
+
+    const index = await buildAttachmentIndex(patients, deps.fileStore, (done, total) =>
+      onProgress?.({ phase: "index", done, total }),
+    );
+    checkStopped();
+    const notRestored = new Set<string>();
+    for (const patient of patients) {
+      for (const owner of [...patient.surgeries, ...patient.consults]) {
+        for (const file of owner.attachments) if (file.notRestored) notRestored.add(file.id);
+      }
+    }
+    const toWrite = index.filter((entry) => !notRestored.has(entry.id));
+    const identity = createBackupSetIdentity();
+    const masterKey = await deriveBackupMasterKey(
+      password,
+      identity.saltBytes,
+      BACKUP_SET_ITERATIONS,
+    );
+    checkStopped();
+
+    const files: Record<string, string> = {};
+    const total = toWrite.length + 1;
+    let done = 0;
+    onProgress?.({ phase: "files", done, total });
+    for (const entry of toWrite) {
+      checkStopped();
+      const blob = await store.getBlob(entry.id);
+      if (!blob || blob.size !== entry.size) throw new Error(FOLDER_BACKUP_FILE_ERROR);
+      const name = createVellumFileName();
+      await writeSealedAttachment(
+        client,
+        {
+          name,
+          blob,
+          masterKey,
+          setIdHex: identity.id,
+          fileSalt: crypto.getRandomValues(new Uint8Array(16)),
+          meta: {
+            id: entry.id,
+            patientId: entry.patientId,
+            ownerKind: entry.ownerKind,
+            ownerId: entry.ownerId,
+            size: entry.size,
+            sha256: entry.sha256,
+          },
+        },
+        signal,
+      );
+      files[entry.id] = name;
+      done += 1;
+      onProgress?.({ phase: "files", done, total });
+    }
+    checkStopped();
+
+    const backupSet: BackupSet = {
+      id: identity.id,
+      salt: identity.salt,
+      iterations: BACKUP_SET_ITERATIONS,
+      frameSize: 65_536,
+      files,
+    };
+    onProgress?.({ phase: "data", done, total });
+    const dataBlob = await encryptDataArchive(
+      patients,
+      contacts,
+      password,
+      deps.fileStore,
+      undefined,
+      backupSet,
+      index,
+      { format: "d2" },
+    );
+    let verified = false;
+    try {
+      const opened = await decryptDataArchive(await dataBlob.arrayBuffer(), password);
+      const recorded = opened.backupSet?.files ?? {};
+      verified =
+        csvToDrafts(opened.csv).drafts.length === patients.length &&
+        opened.attachments.length === countAttachments(patients) &&
+        Object.keys(recorded).length === toWrite.length &&
+        toWrite.every((entry) => recorded[entry.id] === files[entry.id]);
+    } catch {
+      verified = false;
+    }
+    if (!verified) throw new Error(FOLDER_BACKUP_VERIFY_ERROR);
+    checkStopped();
+
+    await writeDataFile(client, createVellumFileName(undefined, "vellum"), dataBlob, signal);
+    done += 1;
+    onProgress?.({ phase: "data", done, total });
+    writeLastFolderBackup(deps.today, deps.storage);
+    return { outcome: "done" };
+  } catch (error) {
+    await client.abortFile().catch(() => null);
+    if (stop) throw new Error(STOP_MESSAGES[stop]);
+    if (error instanceof Error && error.message) throw error;
+    throw new Error(FOLDER_BACKUP_FILE_ERROR);
+  } finally {
+    unsubscribe();
+    deps.signal?.removeEventListener("abort", onAbort);
+    await client.close().catch(() => null);
+  }
 }
