@@ -40,7 +40,7 @@ A backup folder holds **the newest data file, one previous data file, plus one e
 
 ```
 <user-chosen folder>/
-  vellum-<26 chars>.vellum     data file: VELLUMD1 (Part 1 format + optional "backupSet" block, section 4)
+  vellum-<26 chars>.vellum     data file: VELLUMD2 for folder backups (VELLUMD1 for Part 1), optional "backupSet" block, section 4)
   vellum-<26 chars>.vea        one sealed attachment each (new format VELLUMA1, section 3)
   ...
 ```
@@ -81,12 +81,14 @@ DATA FRAMES  (sealed, counters 1..n): plaintext in frameSize (64 KiB) pieces, la
 
 ## 4. Data file and the backup set
 
-The data file stays **`VELLUMD1`, `version: 1`**, produced by the existing `encryptDataArchive`. One optional JSON field is added to its plaintext payload:
+Part 1 data backups stay **`VELLUMD1`, `version: 1`**. Folder backups write the data file as **`VELLUMD2`** (D16), produced by `encryptDataArchive` with the explicit `format: "d2"` option. The JSON payload is identical. One optional JSON field is added to its plaintext payload:
 
 ```json
 "backupSet": { "id": "<32 hex>", "salt": "<base64 16 B>", "iterations": 600000, "frameSize": 65536,
                "files": { "<attachment id>": "<opaque file name>" } }
 ```
+
+**`VELLUMD2` header (40 bytes):** bytes 0-7 magic `VELLUMD2`; 8-11 PBKDF2 iterations (uint32, big-endian); 12-27 salt; 28-39 IV; 40+ AES-GCM ciphertext and tag. The additional data is bytes 0-11 (magic plus iterations), so changing the iteration count makes decryption fail. PBKDF2-HMAC-SHA-256, 256-bit key, as in Part 1. Writing requires 600,000 to 2,000,000 iterations (600,000 by default). Reading refuses anything outside 600,000 to 2,000,000 **before** deriving a key, with the generic "password did not open the file" message and no numbers, so a hostile file cannot make the phone spin. Total file size, header included, must be at most 64 MiB. `decryptDataArchive` picks the path from the magic: `VELLUMD1` files keep their 120,000-iteration path unchanged, and a D1 file is never accepted as D2 or the reverse. The data file now matches the attachment key strength: it holds all patient records, so it should not be the weakest part of the set. The 100,000-5,000,000 range in D14 applies to the `backupSet` block of attachment keys.
 
 - Old apps (including the current one) read only `format`, `version`, `csv`, `attachments` and ignore the rest, so they still restore the data and show every attachment as Not restored. New apps read old files, which simply have no `backupSet`.
 - `files` is an optimisation (direct lookup by name). It is never trusted: restore always verifies the sealed meta frame and falls back to scanning the folder (section 6).
@@ -160,6 +162,7 @@ New Android-free class **`NativeBackupFolderPolicy`** (+ `NativeBackupFolderPoli
 
 - **`VELLUM1`** (and old files with embedded attachments): still import exactly as now.
 - **Plaintext CSV:** unchanged, still opt-in and warned, still never carries attachment bytes.
+- **`VELLUMD2`:** new, written only by folder backups; apps that predate it refuse it as an unknown file rather than importing it. `isDataArchive` and the restore picker recognise both magics.
 - **`VELLUMD1`:** unchanged format. Part 1 files restore as before; the optional `backupSet` block is ignored by old apps and absent in old files. `DATA_FORMAT_VERSION` stays 1 because no field an old reader depends on changes.
 - **`VELLUMA1`** is new and only appears in `.vea` files that old apps never read.
 - The `vellum` IndexedDB and `vellum-casebook-v1` are untouched. No new IndexedDB database is introduced.
@@ -228,3 +231,4 @@ Each chunk keeps the usual gates: `npm run typecheck`, `npm run lint`, `npm test
 | D13 | Manifest visibility | Add `OPEN_DOCUMENT_TREE` to `<queries>` only if 4f proves it is needed; it is not a permission. |
 | D14 | Folder-backup password work factor | New sets use at least 600,000 PBKDF2-HMAC-SHA-256 iterations and store the count in `backupSet`. Restore accepts 100,000–5,000,000 inclusive and refuses values outside that range. Export `MIN_FOLDER_BACKUP_PASSWORD_LENGTH = 12` for the 4g UI; do not change Part 1 rules. |
 | D15 | Backup run visibility | In 4g keep the screen on during a backup run and show the message "Keep Vellum open". |
+| D16 | Data file work factor | Folder-backup data files use `VELLUMD2`: iterations stored in the header and authenticated, 600,000 to 2,000,000, range checked before key derivation, 64 MiB total cap. Part 1 keeps `VELLUMD1` at 120,000 and is untouched. |
