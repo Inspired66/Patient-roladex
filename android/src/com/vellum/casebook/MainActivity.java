@@ -704,9 +704,8 @@ public class MainActivity extends Activity {
 
   private void beginBackupFile(String requestId, JSONObject request, JSONObject payload) {
     if (!hasExactRequestShape(request, payload, "kind", "name", "size")
-        || !(payload.opt("kind") instanceof String)
-        || !(payload.opt("name") instanceof String)
-        || !isInteger(payload.opt("size"))) {
+        || !NativeBackupFolderPolicy.isValidBeginPayloadShape(
+            payload.opt("kind"), payload.opt("name"), payload.opt("size"), payload.length())) {
       sendNativeError(requestId, "That backup file request is invalid.");
       return;
     }
@@ -888,14 +887,7 @@ public class MainActivity extends Activity {
   }
 
   private static boolean isInteger(Object value) {
-    if (!(value instanceof Number)) return false;
-    if (value instanceof Byte || value instanceof Short
-        || value instanceof Integer || value instanceof Long) {
-      return ((Number) value).longValue() >= 0;
-    }
-    double number = ((Number) value).doubleValue();
-    return Double.isFinite(number) && number >= 0 && number <= 9_007_199_254_740_991d
-        && number == Math.rint(number);
+    return NativeBackupFolderPolicy.isNonNegativeInteger(value);
   }
 
   private static boolean isIntRange(Object value, int minimum, int maximum) {

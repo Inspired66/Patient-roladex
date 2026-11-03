@@ -221,6 +221,23 @@ final class NativeBackupFolderPolicy {
     return inFlight != null && inFlight.writtenSize == inFlight.declaredSize;
   }
 
+  static boolean isNonNegativeInteger(Object value) {
+    if (!(value instanceof Number)) return false;
+    if (value instanceof Byte || value instanceof Short
+        || value instanceof Integer || value instanceof Long) {
+      return ((Number) value).longValue() >= 0;
+    }
+    double number = ((Number) value).doubleValue();
+    return Double.isFinite(number) && number >= 0 && number <= 9_007_199_254_740_991d
+        && number == Math.rint(number);
+  }
+
+  // Missing or null fields arrive here as null; exactly three fields are allowed.
+  static boolean isValidBeginPayloadShape(Object kind, Object name, Object size, int fieldCount) {
+    return fieldCount == 3 && kind instanceof String && name instanceof String
+        && isNonNegativeInteger(size);
+  }
+
   long declaredWriteSize() {
     return inFlight == null ? -1L : inFlight.declaredSize;
   }

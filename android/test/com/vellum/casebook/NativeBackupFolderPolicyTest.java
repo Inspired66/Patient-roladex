@@ -11,6 +11,27 @@ public final class NativeBackupFolderPolicyTest {
     check(NativeBackupFolderPolicy.isCreatedSizeAcceptable(0L, Long.valueOf(0L)), "zero equal passes");
   }
 
+  private static void testBeginPayloadShape() {
+    String k = "attachment";
+    String n = "vellum-aaaaaaaaaaaaaaaaaaaaaaaaaa.vea";
+    check(NativeBackupFolderPolicy.isValidBeginPayloadShape(k, n, Integer.valueOf(5), 3), "int ok");
+    check(NativeBackupFolderPolicy.isValidBeginPayloadShape(k, n, Long.valueOf(0L), 3), "zero ok");
+    check(NativeBackupFolderPolicy.isValidBeginPayloadShape(k, n, Double.valueOf(5.0), 3), "whole double ok");
+    check(!NativeBackupFolderPolicy.isValidBeginPayloadShape(k, n, null, 3), "size missing or null");
+    check(!NativeBackupFolderPolicy.isValidBeginPayloadShape(k, n, Integer.valueOf(-1), 3), "negative");
+    check(!NativeBackupFolderPolicy.isValidBeginPayloadShape(k, n, Double.valueOf(1.5), 3), "fractional");
+    check(!NativeBackupFolderPolicy.isValidBeginPayloadShape(k, n, "5", 3), "string size");
+    check(!NativeBackupFolderPolicy.isValidBeginPayloadShape(k, n, Double.valueOf(Double.NaN), 3), "NaN");
+    check(!NativeBackupFolderPolicy.isValidBeginPayloadShape(k, n, Double.valueOf(Double.POSITIVE_INFINITY), 3), "Infinity");
+    check(!NativeBackupFolderPolicy.isValidBeginPayloadShape(k, n, Double.valueOf(1e300), 3), "huge double");
+    check(!NativeBackupFolderPolicy.isValidBeginPayloadShape(k, n, Integer.valueOf(5), 4), "extra field");
+    check(!NativeBackupFolderPolicy.isValidBeginPayloadShape(k, n, Integer.valueOf(5), 2), "missing field count");
+    check(!NativeBackupFolderPolicy.isValidBeginPayloadShape(null, n, Integer.valueOf(5), 3), "kind missing");
+    check(!NativeBackupFolderPolicy.isValidBeginPayloadShape(k, null, Integer.valueOf(5), 3), "name missing");
+    check(!NativeBackupFolderPolicy.isValidBeginPayloadShape(Integer.valueOf(1), n, Integer.valueOf(5), 3), "kind not string");
+    check(!NativeBackupFolderPolicy.isValidBeginPayloadShape(k, Integer.valueOf(1), Integer.valueOf(5), 3), "name not string");
+  }
+
   public static void main(String[] args) {
     testOriginAndArm();
     testPayloadAndNames();
@@ -19,6 +40,7 @@ public final class NativeBackupFolderPolicyTest {
     testListingAndRefs();
     testStatusesAndCleanup();
     testCreatedSizeCheck();
+    testBeginPayloadShape();
     System.out.println("NativeBackupFolderPolicyTest: " + checks + " checks passed");
   }
 

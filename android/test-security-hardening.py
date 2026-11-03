@@ -378,6 +378,9 @@ class WebAssetCheckTest(unittest.TestCase):
         self.assertIn("NativeBackupFolderPolicy.isCreatedSizeAcceptable(", finish)
         self.assertLess(finish.index("backupOutput.close()"), finish.index("isCreatedSizeAcceptable"))
         self.assertLess(finish.index("isCreatedSizeAcceptable"), finish.index("backupFolderPolicy.finishWrite()"))
+        begin = source.split("private void beginBackupFile(", 1)[1].split("\n  private ", 1)[0]
+        self.assertIn("NativeBackupFolderPolicy.isValidBeginPayloadShape(", begin)
+        self.assertIn('hasExactRequestShape(request, payload, "kind", "name", "size")', begin)
         size_query = source.split("private Long reportedBackupSize(", 1)[1].split("\n  private ", 1)[0]
         self.assertIn("COLUMN_SIZE", size_query)
         self.assertNotIn("getMessage", size_query)
