@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildAttachmentIndex,
   csvToDrafts,
   decryptDataArchive,
   encryptArchive,
@@ -322,4 +323,31 @@ test("export fails clearly when an attachment blob is missing", async () => {
   const missing = patients();
   missing[0].consults[0].attachments[0].id = "gone";
   await assert.rejects(() => encryptDataArchive(missing, [], "pw", store), /missing from local storage/);
+});
+
+test("a precomputed index is used as given and files are not read again", async () => {
+  const index = await buildAttachmentIndex(patients(), store);
+  assert.equal(index.length, 2);
+  calls.length = 0;
+  const blob = await encryptDataArchive(
+    patients(),
+    contacts,
+    "pw",
+    store,
+    undefined,
+    undefined,
+    index,
+  );
+  assert.deepEqual(calls, []);
+  const opened = await decryptDataArchive(await buffer(blob), "pw");
+  assert.deepEqual(opened.attachments, index);
+});
+
+test("a malformed precomputed index is refused", async () => {
+  await assert.rejects(
+    encryptDataArchive(patients(), contacts, "pw", store, undefined, undefined, [
+      { id: "x" },
+    ] as never),
+    /attachment index is invalid/,
+  );
 });

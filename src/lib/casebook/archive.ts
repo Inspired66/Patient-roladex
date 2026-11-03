@@ -363,8 +363,7 @@ export function csvToDrafts(csv: string): { drafts: DraftPatient[]; contacts: Co
       draft.notes = general;
       const modified = read("date").trim();
       if (general.trim() && isValidTimestamp(modified)) draft.notesModifiedAt = modified;
-    }
-    else if (general && !draft.notes) draft.notes = general;
+    } else if (general && !draft.notes) draft.notes = general;
     if (kind === "procedure") {
       draft.surgeries.push({
         id: read("record_id").trim() || crypto.randomUUID(),
@@ -750,13 +749,17 @@ export async function encryptDataArchive(
   fileStore = defaultFileStore,
   onProgress?: (done: number, total: number) => void,
   backupSet?: BackupSet,
+  attachmentIndex?: AttachmentIndexEntry[],
 ) {
   const parsedBackupSet = backupSet === undefined ? undefined : validateBackupSet(backupSet);
   const payload = JSON.stringify({
     format: "vellum-data",
     version: DATA_FORMAT_VERSION,
     csv: await patientsToCsv(patients, contacts, fileStore, { includeFiles: false }),
-    attachments: await buildAttachmentIndex(patients, fileStore, onProgress),
+    attachments:
+      attachmentIndex === undefined
+        ? await buildAttachmentIndex(patients, fileStore, onProgress)
+        : parseAttachmentIndex(attachmentIndex),
     ...(parsedBackupSet ? { backupSet: parsedBackupSet } : {}),
   });
   const magic = new TextEncoder().encode(DATA_MAGIC);
