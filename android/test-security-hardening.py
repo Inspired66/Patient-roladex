@@ -374,6 +374,13 @@ class WebAssetCheckTest(unittest.TestCase):
         self.assertIn("closeBackupSession(false)", source.split(
             "protected void onDestroy()", 1
         )[1].split("super.onDestroy()", 1)[0])
+        finish = source.split("private void finishBackupFile(", 1)[1].split("\n  private ", 1)[0]
+        self.assertIn("NativeBackupFolderPolicy.isCreatedSizeAcceptable(", finish)
+        self.assertLess(finish.index("backupOutput.close()"), finish.index("isCreatedSizeAcceptable"))
+        self.assertLess(finish.index("isCreatedSizeAcceptable"), finish.index("backupFolderPolicy.finishWrite()"))
+        size_query = source.split("private Long reportedBackupSize(", 1)[1].split("\n  private ", 1)[0]
+        self.assertIn("COLUMN_SIZE", size_query)
+        self.assertNotIn("getMessage", size_query)
 
     def test_android_build_uses_pinned_webkit_and_scans_packaged_assets(self) -> None:
         build = Path(__file__).with_name("build-apk.sh").read_text(encoding="utf-8")

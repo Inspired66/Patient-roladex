@@ -791,12 +791,26 @@ public class MainActivity extends Activity {
       backupOutput.flush();
       backupOutput.close();
       backupOutput = null;
+      if (!NativeBackupFolderPolicy.isCreatedSizeAcceptable(
+          backupFolderPolicy.declaredWriteSize(), reportedBackupSize(backupInFlightUri))) {
+        throw new IOException();
+      }
       if (!backupFolderPolicy.finishWrite()) throw new IOException();
       backupInFlightUri = null;
       sendNativeResult(requestId, statusResult("written", true));
       notifyBackupStatus(NativeBackupFolderPolicy.DONE);
     } catch (Exception error) {
       failBackupWrite(requestId, "The backup file could not be finished.", NativeBackupFolderPolicy.NO_SPACE);
+    }
+  }
+
+  private Long reportedBackupSize(Uri created) {
+    try (Cursor cursor = getContentResolver().query(
+        created, new String[] {DocumentsContract.Document.COLUMN_SIZE}, null, null, null)) {
+      if (cursor == null || !cursor.moveToFirst() || cursor.isNull(0)) return null;
+      return Long.valueOf(cursor.getLong(0));
+    } catch (Exception error) {
+      return null;
     }
   }
 

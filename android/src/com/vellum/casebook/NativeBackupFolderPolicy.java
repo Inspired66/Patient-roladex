@@ -221,6 +221,15 @@ final class NativeBackupFolderPolicy {
     return inFlight != null && inFlight.writtenSize == inFlight.declaredSize;
   }
 
+  long declaredWriteSize() {
+    return inFlight == null ? -1L : inFlight.declaredSize;
+  }
+
+  // A null reported size means the provider did not say; that is accepted.
+  static boolean isCreatedSizeAcceptable(long declared, Long reported) {
+    return reported == null || reported.longValue() == declared;
+  }
+
   boolean finishWrite() {
     if (!canFinishWrite()) return false;
     inFlight = null;

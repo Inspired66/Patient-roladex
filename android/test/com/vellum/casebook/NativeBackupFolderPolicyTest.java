@@ -3,6 +3,14 @@ package com.vellum.casebook;
 public final class NativeBackupFolderPolicyTest {
   private static int checks;
 
+  private static void testCreatedSizeCheck() {
+    check(NativeBackupFolderPolicy.isCreatedSizeAcceptable(100L, Long.valueOf(100L)), "equal size passes");
+    check(!NativeBackupFolderPolicy.isCreatedSizeAcceptable(100L, Long.valueOf(99L)), "smaller fails");
+    check(!NativeBackupFolderPolicy.isCreatedSizeAcceptable(100L, Long.valueOf(101L)), "larger fails");
+    check(NativeBackupFolderPolicy.isCreatedSizeAcceptable(100L, null), "unreported passes");
+    check(NativeBackupFolderPolicy.isCreatedSizeAcceptable(0L, Long.valueOf(0L)), "zero equal passes");
+  }
+
   public static void main(String[] args) {
     testOriginAndArm();
     testPayloadAndNames();
@@ -10,6 +18,7 @@ public final class NativeBackupFolderPolicyTest {
     testSequenceAndSingleWrite();
     testListingAndRefs();
     testStatusesAndCleanup();
+    testCreatedSizeCheck();
     System.out.println("NativeBackupFolderPolicyTest: " + checks + " checks passed");
   }
 
