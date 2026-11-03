@@ -41,7 +41,11 @@ public final class NativeBackupFolderPolicyTest {
     equal("write", policy.consumeArm(20_001), "arm consumes once");
     check(policy.consumeArm(20_002) == null, "cannot consume twice");
     check(!policy.openSession("read"), "session requires consumed mode");
-    check(policy.openSession("write"), "session opens");
+    check(policy.arm("read", "https", "appassets.androidplatform.net", -1, 21_000), "picker arm for resume");
+    equal("read", policy.consumeArm(21_001), "picker consumes authorization before launch");
+    policy.clearArm();
+    check(policy.openSession("read"), "pause clears only an unused arm while picker is open");
+    check(!policy.openSession("write"), "session mode stays bound to consumed authorization");
     check(!policy.openSession("read"), "only one folder session");
   }
 

@@ -594,8 +594,7 @@ public class MainActivity extends Activity {
     long now = SystemClock.elapsedRealtime();
     if (!backupFolderPolicy.arm(
         mode, page.getScheme(), page.getHost(), page.getPort(), now)
-        || !mode.equals(backupFolderPolicy.consumeArm(now))
-        || !backupFolderPolicy.openSession(mode)) {
+        || !mode.equals(backupFolderPolicy.consumeArm(now))) {
       sendNativeError(requestId, "That backup folder request is invalid.");
       return;
     }
@@ -2449,9 +2448,8 @@ public class MainActivity extends Activity {
         return;
       }
       if (selected == null || !DocumentsContract.isTreeUri(selected)
-          || !backupFolderPolicy.isSessionOpen()
-          || (NativeBackupFolderPolicy.WRITE.equals(mode) && !backupFolderPolicy.isWriteSession())
-          || (NativeBackupFolderPolicy.READ.equals(mode) && !backupFolderPolicy.isReadSession())) {
+          || !NativeBackupFolderPolicy.isAllowedMode(mode)
+          || !backupFolderPolicy.openSession(mode)) {
         closeBackupSession(false);
         sendNativeResult(requestId, statusResult("picked", false));
         notifyBackupStatus(NativeBackupFolderPolicy.CANCELLED);

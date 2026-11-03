@@ -109,7 +109,6 @@ final class NativeBackupFolderPolicy {
 
   void clearArm() {
     armedMode = null;
-    consumedMode = null;
     armExpiresAt = 0;
   }
 
