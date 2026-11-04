@@ -115,7 +115,7 @@ Temp files: **none**. Frames are written straight to the document stream (no cac
 
 ### 5.1 Implemented run (4g-2, simplified; overrides steps 3-5 and 7-9 above)
 
-`runFolderBackup` in `src/lib/casebook/folder-backup.ts` (library only; UI comes in 4g-3):
+`runFolderBackup` in `src/lib/casebook/folder-backup.ts`:
 
 1. Refuse an empty casebook and a password under 12 characters, before the folder is touched.
 2. `arm("write")` first (the folder pick, so keep-screen-on is already active during hashing and key derivation). Cancelling in the picker ends the run quietly with no message and nothing recorded.
@@ -128,6 +128,12 @@ Temp files: **none**. Frames are written straight to the document stream (no cac
 **Where a failure leaves the folder.** Nothing is deleted and nothing existing is changed. A run that stops before step 6 leaves the `.vea` files already written as unused orphans and writes no data file, so the previous data file (if any) still matches its own files. The in-flight file is aborted and removed by native. A stop on `paused`, `folder-lost`, `no-space`, `cancelled` or `name-changed` ends the run with a fixed message for each.
 
 **Every run writes a complete new set**: new set id, new salt, every attachment sealed again with a new name. There are no incremental runs, no folder scan and no resume yet, so the folder grows with each run until the tidy-up task (D6).
+
+### 5.2 Folder backup screen (4g-3)
+
+The archive sheet shows **Back up to folder** only when the native message bridge is present. The screen asks for a password twice (minimum 12 characters) and keeps it only in component state. It explains that each run writes a complete encrypted set, old sets can be removed manually, the password cannot be recovered, and the same password is needed to open the backup. The screen warns that folder restore is not yet available: opening the `.vellum` data file restores records only, with attachments marked **Not restored**.
+
+Progress uses fixed phase labels and file counts only: “Checking files,” “Preparing encryption,” “Saving file N of total” (including the final data file), and “Checking the backup.” While a run is active, the screen says to keep Vellum open, prevents dismissal, and offers Cancel; cancellation remains pending until the native session closes. Errors use fixed messages and warn when completed files may remain. A picker cancellation returns silently to the form. Success clears the password, records and displays the date only, and asks the user to copy the whole folder off the phone.
 
 ## 6. Restore flow
 
