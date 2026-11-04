@@ -299,6 +299,38 @@ test("cancelling between files stops the run without a data file", async () => {
   assert.equal(fake.actions.at(-1), "closeBackupFolder");
 });
 
+test("cancelling after the first index entry does not read later attachments", async () => {
+  const fake = fakeNative();
+  const data = patients();
+  data[0].consults[0].attachments.push({
+    id: "f-c",
+    name: "extra.txt",
+    mime: "text/plain",
+    size: 1,
+  });
+  let reads = 0;
+  const trackedStore: ArchiveFileStore = {
+    ...store,
+    async getBlob(id) {
+      reads += 1;
+      if (id === "f-c") return new Blob(["x"]);
+      return blobs.get(id);
+    },
+  };
+  const controller = new AbortController();
+  const { promise } = run(fake, {
+    fileStore: trackedStore,
+    signal: controller.signal,
+    onProgress: (progress: { phase: string; done: number }) => {
+      if (progress.phase === "index" && progress.done === 1) controller.abort();
+    },
+  });
+  await assert.rejects(promise, (error) => assertFixed(error, FOLDER_BACKUP_CANCELLED));
+  assert.equal(reads, 1);
+  assert.equal(fake.files.length, 0);
+  assert.equal(fake.actions.at(-1), "closeBackupFolder");
+});
+
 for (const code of ["paused", "folder-lost", "no-space", "cancelled", "name-changed"] as const) {
   test(`status ${code} stops the run with a fixed message`, async () => {
     const fake = fakeNative();

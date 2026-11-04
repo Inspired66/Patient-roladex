@@ -254,9 +254,11 @@ export async function runFolderBackup(
     if (!picked?.picked) return { outcome: "cancelled" };
     checkStopped();
 
-    const index = await buildAttachmentIndex(patients, deps.fileStore, (done, total) =>
-      onProgress?.({ phase: "index", done, total }),
-    );
+    const index = await buildAttachmentIndex(patients, deps.fileStore, (done, total) => {
+      checkStopped();
+      onProgress?.({ phase: "index", done, total });
+      checkStopped();
+    });
     checkStopped();
     const notRestored = new Set<string>();
     for (const patient of patients) {
