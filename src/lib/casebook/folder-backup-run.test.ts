@@ -181,7 +181,18 @@ test("a full run writes each file then the data file last, and everything decryp
   );
   assert.ok(fake.files[2].begin.name.endsWith(".vellum"));
   assert.equal(new Set(fake.files.map((f) => f.begin.name)).size, 3);
-  assert.ok(progress.every((line) => /^(index|files|data):\d+\/\d+$/.test(line)));
+  assert.deepEqual(progress, [
+    "index:1/3",
+    "index:2/3",
+    "index:3/3",
+    "key:0/1",
+    "files:0/3",
+    "files:1/3",
+    "files:2/3",
+    "data:2/3",
+    "verify:0/1",
+    "files:2/3",
+  ]);
   assert.equal(storage.map.get(LAST_FOLDER_BACKUP_KEY), TODAY);
   assert.equal(readLastFolderBackup(storage), TODAY);
   assert.equal(fake.subscribed(), false);

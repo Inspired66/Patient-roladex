@@ -74,7 +74,7 @@ export type FolderFileWriter = Pick<
 
 function toBase64(bytes: Uint8Array) {
   let binary = "";
-  const step = 0x8000;
+  const step = 8_192;
   for (let index = 0; index < bytes.length; index += step) {
     binary += String.fromCharCode(...bytes.subarray(index, index + step));
   }
@@ -200,7 +200,7 @@ export function writeLastFolderBackup(
 }
 
 export type FolderBackupProgress = {
-  phase: "index" | "files" | "data";
+  phase: "index" | "key" | "files" | "data" | "verify";
   done: number;
   total: number;
 };
@@ -268,6 +268,7 @@ export async function runFolderBackup(
     }
     const toWrite = index.filter((entry) => !notRestored.has(entry.id));
     const identity = createBackupSetIdentity();
+    onProgress?.({ phase: "key", done: 0, total: 1 });
     const masterKey = await deriveBackupMasterKey(
       password,
       identity.saltBytes,
@@ -328,6 +329,7 @@ export async function runFolderBackup(
       { format: "d2" },
     );
     let verified = false;
+    onProgress?.({ phase: "verify", done: 0, total: 1 });
     try {
       const opened = await decryptDataArchive(await dataBlob.arrayBuffer(), password);
       const recorded = opened.backupSet?.files ?? {};
@@ -342,9 +344,9 @@ export async function runFolderBackup(
     if (!verified) throw new Error(FOLDER_BACKUP_VERIFY_ERROR);
     checkStopped();
 
+    onProgress?.({ phase: "files", done, total });
     await writeDataFile(client, createVellumFileName(undefined, "vellum"), dataBlob, signal);
     done += 1;
-    onProgress?.({ phase: "data", done, total });
     writeLastFolderBackup(deps.today, deps.storage);
     return { outcome: "done" };
   } catch (error) {
