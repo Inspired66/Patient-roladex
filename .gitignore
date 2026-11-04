@@ -18,6 +18,8 @@ artifacts/
 *.idsig
 grok-workspace-*.zip
 project.zip
+attachments/
+screenshots/
 
 # Voice transcription: downloaded engine/model artifacts, sample audio, harness output
 android/third_party/vosk/downloads/
