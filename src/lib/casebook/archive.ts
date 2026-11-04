@@ -39,9 +39,10 @@ const DATA_V2_HEADER_BYTES = 40;
 export const DATA_V2_MIN_ITERATIONS = 600_000;
 export const DATA_V2_MAX_ITERATIONS = 2_000_000;
 export const MAX_DATA_FILE_BYTES = 64 * 1024 * 1024;
-const DATA_FILE_TOO_LARGE = "The backup is too large to save.";
-const DATA_OPEN_ERROR =
+export const DATA_FILE_TOO_LARGE = "The backup is too large to save.";
+export const DATA_OPEN_ERROR =
   "That password did not open the file, or the file is damaged or incomplete.";
+export const DATA_READ_ERROR = "The backup could not be read.";
 const DATA_FORMAT_VERSION = 1;
 const MAX_INDEX_ENTRIES = 20_000;
 // A single file can never exceed the per-patient budget. This is a sanity ceiling for one packed
@@ -865,10 +866,10 @@ export async function decryptDataArchive(
   try {
     parsed = JSON.parse(plain);
   } catch {
-    throw new Error("The backup could not be read.");
+    throw new Error(DATA_READ_ERROR);
   }
   if (!parsed || parsed.format !== "vellum-data" || typeof parsed.csv !== "string") {
-    throw new Error("The backup could not be read.");
+    throw new Error(DATA_READ_ERROR);
   }
   if (typeof parsed.version !== "number" || parsed.version > DATA_FORMAT_VERSION) {
     throw new Error("This backup was made by a newer version of Vellum.");

@@ -1,5 +1,7 @@
 import {
   BACKUP_CHUNK_BYTES,
+  BACKUP_FILE_ERROR,
+  BACKUP_SETTINGS_ERROR,
   BACKUP_SET_ITERATIONS,
   MIN_FOLDER_BACKUP_PASSWORD_LENGTH,
   createBackupSetIdentity,
@@ -14,6 +16,9 @@ import {
 import {
   buildAttachmentIndex,
   csvToDrafts,
+  DATA_FILE_TOO_LARGE,
+  DATA_OPEN_ERROR,
+  DATA_READ_ERROR,
   decryptDataArchive,
   encryptDataArchive,
   type ArchiveFileStore,
@@ -29,6 +34,38 @@ import type { Contact, Patient } from "./types.ts";
 
 export const FOLDER_BACKUP_FILE_ERROR = "The backup file could not be written.";
 export const FOLDER_BACKUP_CANCELLED = "The backup was cancelled.";
+export const FOLDER_BACKUP_EMPTY = "There is nothing to back up yet. Add a patient first.";
+export const FOLDER_BACKUP_SHORT_PASSWORD = `Use at least ${MIN_FOLDER_BACKUP_PASSWORD_LENGTH} characters.`;
+export const FOLDER_BACKUP_VERIFY_ERROR =
+  "The backup did not pass its check, so the data file was not saved.";
+export const FOLDER_BACKUP_PAUSED =
+  "The backup stopped because Vellum was not on screen. Keep Vellum open and try again.";
+export const FOLDER_BACKUP_FOLDER_LOST = "The backup folder is no longer available.";
+export const FOLDER_BACKUP_NO_SPACE = "There is not enough space in the folder.";
+export const FOLDER_BACKUP_NAME_CHANGED =
+  "The folder app renamed a backup file, so the backup was stopped.";
+
+export const FOLDER_BACKUP_STATUS_MESSAGES = {
+  paused: FOLDER_BACKUP_PAUSED,
+  "folder-lost": FOLDER_BACKUP_FOLDER_LOST,
+  "no-space": FOLDER_BACKUP_NO_SPACE,
+  cancelled: FOLDER_BACKUP_CANCELLED,
+  "name-changed": FOLDER_BACKUP_NAME_CHANGED,
+} as const;
+
+export const FOLDER_BACKUP_FIXED_MESSAGES = [
+  FOLDER_BACKUP_FILE_ERROR,
+  FOLDER_BACKUP_CANCELLED,
+  FOLDER_BACKUP_EMPTY,
+  FOLDER_BACKUP_SHORT_PASSWORD,
+  FOLDER_BACKUP_VERIFY_ERROR,
+  ...Object.values(FOLDER_BACKUP_STATUS_MESSAGES),
+  BACKUP_FILE_ERROR,
+  BACKUP_SETTINGS_ERROR,
+  DATA_FILE_TOO_LARGE,
+  DATA_OPEN_ERROR,
+  DATA_READ_ERROR,
+] as const;
 
 export type FolderFileWriter = Pick<
   ReturnType<typeof makeBackupFolderClient>,
@@ -162,19 +199,6 @@ export function writeLastFolderBackup(
   }
 }
 
-export const FOLDER_BACKUP_EMPTY = "There is nothing to back up yet. Add a patient first.";
-export const FOLDER_BACKUP_SHORT_PASSWORD = `Use at least ${MIN_FOLDER_BACKUP_PASSWORD_LENGTH} characters.`;
-export const FOLDER_BACKUP_VERIFY_ERROR =
-  "The backup did not pass its check, so the data file was not saved.";
-
-const STOP_MESSAGES: Record<Exclude<BackupFolderStatusCode, "done">, string> = {
-  paused: "The backup stopped because Vellum was not on screen. Keep Vellum open and try again.",
-  "folder-lost": "The backup folder is no longer available.",
-  "no-space": "There is not enough space in the folder.",
-  cancelled: FOLDER_BACKUP_CANCELLED,
-  "name-changed": "The folder app renamed a backup file, so the backup was stopped.",
-};
-
 export type FolderBackupProgress = {
   phase: "index" | "files" | "data";
   done: number;
@@ -219,7 +243,9 @@ export async function runFolderBackup(
   if (deps.signal?.aborted) internal.abort();
   const signal = internal.signal;
   const checkStopped = () => {
-    if (signal.aborted) throw new Error(stop ? STOP_MESSAGES[stop] : FOLDER_BACKUP_CANCELLED);
+    if (signal.aborted) {
+      throw new Error(stop ? FOLDER_BACKUP_STATUS_MESSAGES[stop] : FOLDER_BACKUP_CANCELLED);
+    }
   };
 
   try {
@@ -321,9 +347,18 @@ export async function runFolderBackup(
     return { outcome: "done" };
   } catch (error) {
     await client.abortFile().catch(() => null);
-    if (stop) throw new Error(STOP_MESSAGES[stop]);
-    if (error instanceof Error && error.message) throw error;
-    throw new Error(FOLDER_BACKUP_FILE_ERROR);
+    const message = stop
+      ? FOLDER_BACKUP_STATUS_MESSAGES[stop]
+      : error instanceof Error
+        ? error.message
+        : "";
+    throw new Error(
+      FOLDER_BACKUP_FIXED_MESSAGES.includes(
+        message as (typeof FOLDER_BACKUP_FIXED_MESSAGES)[number],
+      )
+        ? message
+        : FOLDER_BACKUP_FILE_ERROR,
+    );
   } finally {
     unsubscribe();
     deps.signal?.removeEventListener("abort", onAbort);

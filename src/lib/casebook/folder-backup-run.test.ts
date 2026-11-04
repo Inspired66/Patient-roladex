@@ -269,6 +269,18 @@ test("a failure on file 2 writes no data file, no date, and still closes", async
   assert.equal(fake.actions.includes("deleteBackupFile"), false);
 });
 
+test("a blob-store error cannot expose attachment identifiers or names", async () => {
+  const fake = fakeNative();
+  const unsafeStore: ArchiveFileStore = {
+    ...store,
+    async getBlob() {
+      throw new Error("Missing attachment f-a named secret-a.pdf.");
+    },
+  };
+  const { promise } = run(fake, { fileStore: unsafeStore });
+  await assert.rejects(promise, (error) => assertFixed(error, FOLDER_BACKUP_FILE_ERROR));
+});
+
 test("cancelling between files stops the run without a data file", async () => {
   const fake = fakeNative();
   const controller = new AbortController();
