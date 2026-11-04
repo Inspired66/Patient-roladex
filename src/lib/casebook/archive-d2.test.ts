@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { classifyBackupFile } from "./restore-flow.ts";
+import { classifyBackupFile, commitBackup, openEncryptedBackup } from "./restore-flow.ts";
 import {
   DATA_V2_MAX_ITERATIONS,
   DATA_V2_MIN_ITERATIONS,
@@ -64,6 +64,84 @@ test("D1 stays the default and still decrypts", async () => {
   const bytes = await bytesOf(await encryptDataArchive([], [], "pw"));
   assert.equal(new TextDecoder().decode(bytes.slice(0, 8)), "VELLUMD1");
   await opens(bytes);
+});
+
+test("the Part 1 restore path imports D2 data and marks indexed attachments Not restored", async () => {
+  const patient = [
+    {
+      id: "p-test",
+      name: "Test, Pat",
+      dob: "",
+      gender: "",
+      phone: "",
+      email: "",
+      notes: "",
+      surgeries: [
+        {
+          id: "s-test",
+          date: "2026-01-01",
+          surgeon: "Dr Example",
+          type: "Test procedure",
+          hospital: "Example Hospital",
+          notes: "",
+          attachments: [],
+        },
+      ],
+      consults: [],
+    },
+  ] as never[];
+  const index = [
+    {
+      id: "f-test",
+      patientId: "p-test",
+      ownerKind: "procedure" as const,
+      ownerId: "s-test",
+      name: "invented.pdf",
+      mime: "application/pdf",
+      size: 12,
+      sha256: "ab".repeat(32),
+      addedAt: "2026-01-01T00:00:00.000Z",
+    },
+  ];
+  const data = await encryptDataArchive(patient, [], "pw", undefined, undefined, undefined, index, {
+    format: "d2",
+  });
+  const picked = classifyBackupFile(await data.arrayBuffer());
+  assert.equal(picked.needsPassword, true);
+  if (!picked.needsPassword) assert.fail("D2 must ask for a password");
+  const opened = await openEncryptedBackup(picked.buffer, "pw");
+  assert.equal(opened.kind, "data");
+  assert.equal(opened.drafts.length, 1);
+  assert.equal(opened.index.length, 1);
+
+  let restored: never[] = [];
+  let blobWrites = 0;
+  await commitBackup(
+    opened,
+    (records) => {
+      restored = records as never[];
+    },
+    {
+      getBlob: async () => undefined,
+      putBlob: async () => {
+        blobWrites += 1;
+      },
+      deleteBlob: async () => {},
+    },
+  );
+  const attachment = (restored[0] as unknown as { surgeries: { attachments: never[] }[] })
+    .surgeries[0].attachments[0] as unknown as {
+    id: string;
+    size: number;
+    notRestored: { sha256: string; addedAt: string };
+  };
+  assert.equal(attachment.id, "f-test");
+  assert.equal(attachment.size, 12);
+  assert.deepEqual(attachment.notRestored, {
+    sha256: "ab".repeat(32),
+    addedAt: "2026-01-01T00:00:00.000Z",
+  });
+  assert.equal(blobWrites, 0);
 });
 
 test("D2 refuses tampering with magic, iterations, salt, iv or ciphertext", async () => {
