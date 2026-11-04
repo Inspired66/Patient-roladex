@@ -1,6 +1,4 @@
 import {
-  FOLDER_BACKUP_CANCELLED,
-  FOLDER_BACKUP_EMPTY,
   FOLDER_BACKUP_FILE_ERROR,
   FOLDER_BACKUP_FIXED_MESSAGES,
   FOLDER_BACKUP_SHORT_PASSWORD,
@@ -57,6 +55,7 @@ export function folderBackupFixedMessage(reason: unknown) {
 
 export type FolderBackupUiEvent =
   | { type: "start" }
+  | { type: "progress"; done: number }
   | { type: "cancel" }
   | { type: "picker-cancel" }
   | { type: "success" }
@@ -69,6 +68,8 @@ export function transitionFolderBackupUi(
   switch (event.type) {
     case "start":
       return { status: "running", message: "", wroteFiles: false };
+    case "progress":
+      return event.done > 0 && state.status === "running" ? { ...state, wroteFiles: true } : state;
     case "cancel":
       return state.status === "running"
         ? { ...state, status: "cancelling", message: FOLDER_BACKUP_CANCELLING }
@@ -82,11 +83,7 @@ export function transitionFolderBackupUi(
         status: "error",
         message: event.wroteFiles
           ? `${event.message} Some files may have been saved in the folder before it stopped. You can delete them.`
-          : event.message === FOLDER_BACKUP_EMPTY
-            ? FOLDER_BACKUP_EMPTY
-            : event.message === FOLDER_BACKUP_CANCELLED
-              ? FOLDER_BACKUP_CANCELLED
-              : event.message,
+          : event.message,
         wroteFiles: event.wroteFiles,
       };
   }

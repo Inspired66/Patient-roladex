@@ -43,15 +43,23 @@ const HOSPITALS = [
 export function Sheet({
   title,
   onClose,
+  canDismiss = true,
+  onBeforeClose,
   children,
 }: {
   title: string;
   onClose: () => void;
+  canDismiss?: boolean;
+  onBeforeClose?: () => void;
   children: React.ReactNode;
 }) {
   const [shown, setShown] = useState(false);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  const canDismissRef = useRef(canDismiss);
+  canDismissRef.current = canDismiss;
+  const onBeforeCloseRef = useRef(onBeforeClose);
+  onBeforeCloseRef.current = onBeforeClose;
   const closing = useRef(false);
   useBackLayer(true, () => close());
 
@@ -61,8 +69,9 @@ export function Sheet({
   }, []);
 
   function close() {
-    if (closing.current) return;
+    if (closing.current || !canDismissRef.current) return;
     closing.current = true;
+    onBeforeCloseRef.current?.();
     const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     setShown(false);
     window.setTimeout(() => onCloseRef.current(), reduce ? 0 : 280);
@@ -82,6 +91,7 @@ export function Sheet({
         type="button"
         className={shown ? "sheet-backdrop is-in" : "sheet-backdrop"}
         aria-label="Close"
+        disabled={!canDismiss}
         onClick={close}
       />
       <div className={shown ? "sheet is-in" : "sheet"} role="dialog" aria-modal="true" aria-labelledby="sheet-title">

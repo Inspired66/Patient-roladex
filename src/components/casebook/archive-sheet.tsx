@@ -1,5 +1,6 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DataBackupSheet } from "@/components/casebook/data-backup-sheet";
+import { FolderBackupSheet } from "@/components/casebook/folder-backup-sheet";
 import { Confirm, Sheet } from "@/components/casebook/forms";
 import { PASSWORD_INPUT_PROPS, PasswordNote } from "@/components/casebook/password-input";
 import { encryptArchive, patientsToCsv, saveBlob } from "@/lib/casebook/archive";
@@ -13,6 +14,7 @@ import {
   type OpenedBackup,
 } from "@/lib/casebook/restore-flow";
 import { todayISO } from "@/lib/casebook/format";
+import { hasNativeMessageBridge } from "@/lib/casebook/native-bridge";
 import { openRestorePicker } from "@/lib/casebook/restore-picker";
 import { useCasebook } from "@/lib/casebook/store";
 import type { Patient } from "@/lib/casebook/types";
@@ -37,6 +39,8 @@ export function ArchiveSheet({
   const [saved, setSaved] = useState("");
   const [warnPlain, setWarnPlain] = useState(false);
   const [dataBackup, setDataBackup] = useState(false);
+  const [folderBackup, setFolderBackup] = useState(false);
+  const [nativeBridge, setNativeBridge] = useState(false);
   const [locked, setLocked] = useState<ArrayBuffer | null>(null);
   const [unlockPassword, setUnlockPassword] = useState("");
   const [restore, setRestore] = useState<OpenedBackup | null>(null);
@@ -45,6 +49,10 @@ export function ArchiveSheet({
   const fileRef = useRef<HTMLInputElement>(null);
 
   const chosen = scope === "list" ? listed : everyone;
+
+  useEffect(() => {
+    setNativeBridge(hasNativeMessageBridge());
+  }, []);
 
   async function savePlain() {
     setWarnPlain(false);
@@ -161,6 +169,7 @@ export function ArchiveSheet({
   }
 
   if (dataBackup) return <DataBackupSheet onClose={onClose} />;
+  if (folderBackup) return <FolderBackupSheet onClose={onClose} />;
 
   return (
     <Sheet title="Archive" onClose={onClose}>
@@ -168,6 +177,11 @@ export function ArchiveSheet({
         <button type="button" className="btn-ink" onClick={() => setDataBackup(true)}>
           Back up data
         </button>
+        {nativeBridge ? (
+          <button type="button" className="btn-ghost" onClick={() => setFolderBackup(true)}>
+            Back up to folder
+          </button>
+        ) : null}
         <div className="section-head">
           <h3>Restore from backup</h3>
         </div>

@@ -69,11 +69,13 @@ test("unknown errors map to a fixed message and approved errors stay fixed", () 
 test("folder backup UI transitions preserve retry state without exposing data", () => {
   const running = transitionFolderBackupUi(INITIAL_FOLDER_BACKUP_UI_STATE, { type: "start" });
   assert.deepEqual(running, { status: "running", message: "", wroteFiles: false });
-  const cancelling = transitionFolderBackupUi(running, { type: "cancel" });
+  const writing = transitionFolderBackupUi(running, { type: "progress", done: 1 });
+  assert.equal(writing.wroteFiles, true);
+  const cancelling = transitionFolderBackupUi(writing, { type: "cancel" });
   assert.deepEqual(cancelling, {
     status: "cancelling",
     message: FOLDER_BACKUP_CANCELLING,
-    wroteFiles: false,
+    wroteFiles: true,
   });
   const failed = transitionFolderBackupUi(running, {
     type: "failure",
